@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DataX Pipeline Studio</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <script src="./xlsx.full.min.js"></script>
+    <script src="pipeline-engine.js" defer></script>
+    <script src="app-studio.js" defer></script>
+</head>
+<body>
+    <!-- Overlay Loading Thông báo chung -->
+    <div id="global-loading" class="global-loading hidden">
+        <div class="spinner-xl"></div>
+        <p id="global-loading-text">Đang xử lý...</p>
+    </div>
+
+    <div class="app-container">
+        <!-- ÁI TRÁI: DANH SÁCH BƯỚC (PIPELINE RECIPE) -->
+        <aside class="sidebar recipe-panel">
+            <div class="brand">
+                <div class="logo"></div>
+                <h2>DataX Studio</h2>
+            </div>
+            
+            <div class="recipe-header">
+                <h3>Luồng Kịch Bản</h3>
+                <button class="btn btn-icon" id="btn-pipeline-options" title="Tuỳ chọn">⚙</button>
+            </div>
+
+            <div class="pipeline-steps" id="pipeline-steps">
+                <!-- Javascript sẽ render vào đây -->
+            </div>
+
+            <div class="add-step-wrapper">
+                <button class="btn btn-outline w-full text-left" id="btn-add-step">+ Thêm Công Đoạn</button>
+                <div class="dropdown-menu hidden" id="dropdown-add-step">
+                    <a href="#" data-action="FILTER">Lọc Dữ Liệu (Filter)</a>
+                    <a href="#" data-action="VLOOKUP">Trộn Data (VLOOKUP)</a>
+                    <a href="#" data-action="GROUP_BY">Gồm Nhóm (Group/Pivot)</a>
+                    <a href="#" data-action="SELECT_COLUMNS">Xào Cột (Select/Rename)</a>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN AREA -->
+        <main class="main-workspace">
+            
+            <!-- VÙNG CẤU HÌNH (STEP CONFIGURATION) -->
+            <section class="config-panel" id="config-panel">
+                <div class="empty-state" id="config-empty">
+                    <p>Chọn một công đoạn bên trái để cấu hình.</p>
+                </div>
+                <!-- Vùng chứa form cấu hình động do JS render -->
+                <div id="config-dynamic" class="hidden"></div>
+            </section>
+
+            <!-- VÙNG QUAN SÁT (DATA PREVIEW) -->
+            <section class="preview-panel">
+                <div class="preview-header">
+                    <div class="preview-info">
+                        <h3>Live Preview <span>(100 dòng đầu)</span></h3>
+                        <span id="preview-row-count" class="badge">0 dòng (Full)</span>
+                        <span id="preview-col-count" class="badge">0 cột</span>
+                        <div id="preview-mini-loading" class="mini-spinner hidden"></div>
+                    </div>
+                    <button class="btn btn-primary" id="btn-export-final">
+                        Xuất Toàn Bộ Excel
+                    </button>
+                </div>
+                
+                <div class="table-wrapper">
+                    <table id="preview-table">
+                        <thead id="preview-thead">
+                            <!-- JS Render Header -->
+                        </thead>
+                        <tbody id="preview-tbody">
+                            <!-- JS Render Rows -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        </main>
+    </div>
+</body>
+</html>
