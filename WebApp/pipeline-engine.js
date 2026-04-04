@@ -191,10 +191,11 @@ function applyStepToData(sourceData, step) {
                     if (!groupMap.has(k)) {
                         const initObj = {};
                         initObj[config.groupCol] = row[config.groupCol];
-                        // Khởi tạo các biến gộp
+                        // Khởi tạo các biến gộp bằng internal key
                         for (const agg of (config.aggregates || [])) {
-                            if (agg.type === 'SUM' || agg.type === 'COUNT') initObj[agg.col] = 0;
-                            if (agg.type === 'JOIN_STRING') initObj[agg.col] = new Set();
+                            const internalKey = `__${agg.type}__${agg.col}`;
+                            if (agg.type === 'SUM' || agg.type === 'COUNT') initObj[internalKey] = 0;
+                            if (agg.type === 'JOIN_STRING') initObj[internalKey] = new Set();
                         }
                         groupMap.set(k, initObj);
                     }
@@ -203,23 +204,34 @@ function applyStepToData(sourceData, step) {
                     
                     for (const agg of (config.aggregates || [])) {
                         const val = row[agg.col];
+                        const internalKey = `__${agg.type}__${agg.col}`;
                         if (agg.type === 'SUM') {
                             let num = parseFloat(val);
-                            if (!isNaN(num)) mapItem[agg.col] += num;
+                            if (!isNaN(num)) mapItem[internalKey] += num;
                         } else if (agg.type === 'COUNT') {
-                            if (val !== undefined && val !== "") mapItem[agg.col] += 1;
+                            if (val !== undefined && val !== "") mapItem[internalKey] += 1;
                         } else if (agg.type === 'JOIN_STRING') {
-                            if (val && String(val).trim() !== "") mapItem[agg.col].add(String(val).trim());
+                            if (val && String(val).trim() !== "") mapItem[internalKey].add(String(val).trim());
                         }
                     }
                 }
 
-                // Chuyển set về chuỗi
+                // Chuyển kết quả về array
                 result = Array.from(groupMap.values()).map(row => {
-                    const finalRow = { ...row };
+                    const finalRow = {};
+                    finalRow[config.groupCol] = row[config.groupCol];
+                    
                     for (const agg of (config.aggregates || [])) {
+                        const internalKey = `__${agg.type}__${agg.col}`;
+                        let outName = agg.col;
+                        if (agg.type === 'SUM') outName = `Tổng_${agg.col}`;
+                        else if (agg.type === 'COUNT') outName = `Đếm_${agg.col}`;
+                        else if (agg.type === 'JOIN_STRING') outName = `Chuỗi_${agg.col}`;
+
                         if (agg.type === 'JOIN_STRING') {
-                            finalRow[agg.col] = Array.from(row[agg.col]).join(", ");
+                            finalRow[outName] = Array.from(row[internalKey]).join(" | ");
+                        } else {
+                            finalRow[outName] = row[internalKey];
                         }
                     }
                     return finalRow;
