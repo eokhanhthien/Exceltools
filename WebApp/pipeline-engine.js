@@ -54,6 +54,70 @@ function applyStepToData(sourceData, step) {
             }
         } 
         
+        else if (step.type === 'MATH_COMPUTE') {
+            const config = step.config;
+            const newCol = (config.newColName && config.newColName.trim() !== '') ? config.newColName : 'Kết Quả Tính';
+            result = result.map(row => {
+                const newRow = { ...row };
+                let val1 = parseFloat(row[config.col1]) || 0;
+                let val2 = config.type2 === 'COLUMN' ? (parseFloat(row[config.col2]) || 0) : (parseFloat(config.val2) || 0);
+                
+                let res = 0;
+                if (config.op === '+') res = val1 + val2;
+                if (config.op === '-') res = val1 - val2;
+                if (config.op === '*') res = val1 * val2;
+                if (config.op === '/') res = val2 !== 0 ? val1 / val2 : 0;
+                if (config.op === '%_CHANGE') res = val2 !== 0 ? ((val1 - val2) / Math.abs(val2)) * 100 : 0;
+
+                newRow[newCol] = res;
+                return newRow;
+            });
+        }
+
+        else if (step.type === 'CONDITIONAL_COLUMN') {
+            const config = step.config;
+            const targetCol = (config.newColName && config.newColName.trim() !== "") ? config.newColName : `Cột Mới (IF)`;
+            
+            if (config.rules && config.rules.length > 0 || config.elseVal) {
+                result = result.map(row => {
+                    const newRow = { ...row };
+                    let finalVal = config.elseVal;
+                    
+                    for (const rule of (config.rules || [])) {
+                        const cellValOrig = row[rule.ifCol];
+                        let cellVal = cellValOrig;
+                        let compVal = rule.compareType === 'COLUMN' ? row[rule.compareVal] : rule.compareVal;
+                        
+                        const numCell = parseFloat(cellVal);
+                        const numComp = parseFloat(compVal);
+                        const isNum = !isNaN(numCell) && !isNaN(numComp);
+
+                        let match = false;
+                        if (rule.op === 'IS_EMPTY') match = (cellVal === undefined || cellVal === null || String(cellVal).trim() === "");
+                        else if (rule.op === 'NOT_EMPTY') match = (cellVal !== undefined && cellVal !== null && String(cellVal).trim() !== "");
+                        else {
+                            const v1 = isNum ? numCell : String(cellVal || "").trim().toUpperCase();
+                            const v2 = isNum ? numComp : String(compVal || "").trim().toUpperCase();
+                            
+                            if (rule.op === '>') match = v1 > v2;
+                            if (rule.op === '<') match = v1 < v2;
+                            if (rule.op === '>=') match = v1 >= v2;
+                            if (rule.op === '<=') match = v1 <= v2;
+                            if (rule.op === '=') match = v1 === v2;
+                            if (rule.op === '!=') match = v1 !== v2;
+                        }
+
+                        if (match) {
+                            finalVal = rule.thenType === 'COLUMN' ? row[rule.thenVal] : rule.thenVal;
+                            break; 
+                        }
+                    }
+                    newRow[targetCol] = finalVal;
+                    return newRow;
+                });
+            }
+        }
+
         else if (step.type === 'VLOOKUP') {
             if (config.lookupData && config.baseKey && config.lookupKey) {
                 // Tối ưu Vlookup bằng Map Index O(1) thay cho 2 vòng lặp lồng nhau
@@ -70,8 +134,27 @@ function applyStepToData(sourceData, step) {
                     const k = String(row[config.baseKey] || "").trim().toUpperCase();
                     const match = lookupMap.get(k);
                     
+                    if (config.enableFlag || config.flagColName) {
+                        const fCol = config.flagColName || 'Trang_Thai_Khop';
+                        newRow[fCol] = match ? "Có" : "Không";
+                    }
+
                     for (const grabCol of (config.grabColumns || [])) {
-                        const targetName = config.prefix ? `${config.prefix}_${grabCol}` : grabCol;
+                        let targetName = config.prefix ? `${config.prefix}_${grabCol}` : grabCol;
+                        
+                        // Chống ghi đè cột đã có ở File gốc
+                        let suffix = 2;
+                        let originalName = targetName;
+                        while (row[targetName] !== undefined) {
+                            targetName = `${originalName}_File2`;
+                            // Để an toàn nếu cột _File2 đã tồn tại:
+                            if (row[targetName] !== undefined && suffix > 2) {
+                                targetName = `${originalName}_File${suffix}`;
+                            }
+                            if (row[targetName] === undefined) break;
+                            suffix++;
+                        }
+
                         if (match) {
                             newRow[targetName] = match[grabCol];
                         } else {
@@ -87,6 +170,11 @@ function applyStepToData(sourceData, step) {
                     result = result.filter(row => {
                         const k = String(row[config.baseKey] || "").trim().toUpperCase();
                         return lookupMap.has(k);
+                    });
+                } else if (config.joinType === 'ANTI') {
+                    result = result.filter(row => {
+                        const k = String(row[config.baseKey] || "").trim().toUpperCase();
+                        return !lookupMap.has(k);
                     });
                 }
             }

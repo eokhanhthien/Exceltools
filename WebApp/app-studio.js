@@ -16,8 +16,10 @@ function createStep(type) {
     let config = {};
 
     if (type === 'FILTER') { title = "Lọc Dữ Liệu"; config = { conditions: [] }; }
-    else if (type === 'VLOOKUP') { title = "Merge Bảng Data"; config = { joinType: 'LEFT', lookupData: null, grabColumns: [] }; }
+    else if (type === 'VLOOKUP') { title = "Merge Bảng Data"; config = { joinType: 'LEFT', lookupData: null, grabColumns: [], enableFlag: false, flagColName: 'Trang_Thai_Khop' }; }
     else if (type === 'GROUP_BY') { title = "Gộp (Group By)"; config = { aggregates: [] }; }
+    else if (type === 'CONDITIONAL_COLUMN') { title = "Thêm Cột (Logic IF)"; config = { newColName: "", rules: [], elseVal: "", elseType: "VALUE" }; }
+    else if (type === 'MATH_COMPUTE') { title = "Phép Tính Toán Học"; config = { newColName: "", col1: "", op: "-", type2: "COLUMN", col2: "", val2: "" }; }
     else if (type === 'SELECT_COLUMNS') { title = "Chọn/Đổi Tên Cột"; config = { columns: [] }; }
 
     return { id, type, title, config, disabled: false };
@@ -88,6 +90,8 @@ function getStepDesc(step) {
     if (step.type === 'FILTER') return step.config.conditions.length ? `${step.config.conditions.length} điều kiện lọc` : 'Chưa cấu hình';
     if (step.type === 'VLOOKUP') return step.config.lookupData ? `Join ${step.config.grabColumns.length} cột qua ${step.config.baseKey || '?'}` : 'Chưa nhập file';
     if (step.type === 'GROUP_BY') return step.config.groupCol ? `Nhóm theo ${step.config.groupCol}` : 'Chưa cấu hình';
+    if (step.type === 'CONDITIONAL_COLUMN') return step.config.newColName ? `Tạo cột: ${step.config.newColName}` : 'Chưa cấu hình';
+    if (step.type === 'MATH_COMPUTE') return step.config.newColName ? `Làm toán: ${step.config.newColName}` : 'Chưa cấu hình';
     if (step.type === 'SELECT_COLUMNS') return step.config.columns.length ? `Giữ ${step.config.columns.length} cột xuất` : 'Chưa cấu hình';
     return '';
 }
@@ -298,6 +302,213 @@ function renderConfigPanel() {
         });
     }
 
+    /** BƯỚC THÊM CỘT ĐIỀU KIỆN (COMPUTE/IF) **/
+    else if (step.type === 'CONDITIONAL_COLUMN') {
+        dynamicPane.innerHTML = `
+            <h3 class="config-title">Thêm Cột Tính Tính Tốn (IF/THEN)</h3>
+            <p class="config-desc">So sánh dữ liệu để gán kết quả đầu ra theo ý muốn (Tương tự IFERROR, IF...)</p>
+
+            <div class="row" style="margin-bottom: 16px;">
+                <div class="col" style="max-width: 300px;">
+                    <label class="form-label">Tên Cột Mới</label>
+                    <input type="text" id="cond-new-col" class="form-control" value="${step.config.newColName || ''}" placeholder="VD: Trạng Thái">
+                </div>
+            </div>
+
+            <div style="border-top: 1px solid var(--border); padding-top: 16px;">
+                <label class="form-label">Quy Tắc (Rules) - Ưu tiên duyệt từ trên xuống</label>
+                <div id="cond-rules-list" style="margin-bottom: 12px; display:flex; flex-direction:column; gap:8px;"></div>
+                
+                <div style="background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; border: 1px dashed var(--border);">
+                    <div class="row" style="align-items:flex-end; margin-bottom: 8px;">
+                        <div class="col">
+                            <select id="cond-if-col" class="form-control"><option value="">-- NẾU CỘT --</option>${optHtml}</select>
+                        </div>
+                        <div class="col">
+                            <select id="cond-op" class="form-control">
+                                <option value="=">Bằng (=)</option>
+                                <option value="!=">Khác (!=)</option>
+                                <option value=">">Lớn hơn (>)</option>
+                                <option value="<">Nhỏ hơn (<)</option>
+                                <option value=">=">Lớn hơn bằng</option>
+                                <option value="<=">Nhỏ hơn bằng</option>
+                                <option value="IS_EMPTY">Bị trống/Lỗi (IS BLANK/ERROR)</option>
+                                <option value="NOT_EMPTY">Có Dữ Liệu</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row" style="align-items:flex-end; margin-bottom: 8px;" id="cond-compare-area">
+                        <div class="col">
+                            <select id="cond-comp-type" class="form-control">
+                                <option value="VALUE">Với Giá Trị Gõ Tay</option>
+                                <option value="COLUMN">Với Cột Khác</option>
+                            </select>
+                        </div>
+                        <div class="col" id="cond-comp-val-area">
+                            <input type="text" id="cond-comp-val" class="form-control" placeholder="Giá trị so sánh">
+                        </div>
+                    </div>
+                    <div class="row" style="align-items:flex-end;">
+                        <div class="col">
+                            <label class="form-label" style="color:var(--success);">VẬY THÌ KẾT QUẢ ĐẦU RA SẼ LÀ:</label>
+                            <select id="cond-then-type" class="form-control" style="margin-bottom:4px;">
+                                <option value="VALUE">Giá Trị Cố Định (Text/Số)</option>
+                                <option value="COLUMN">Lấy từ Cột Khác</option>
+                            </select>
+                            <input type="text" id="cond-then-val" class="form-control" placeholder="Giá trị...">
+                        </div>
+                        <button class="btn btn-outline" id="cond-add-rule" style="height:40px;">+ Thêm Quy Tắc</button>
+                    </div>
+                </div>
+
+                <div class="row" style="align-items:flex-end; margin-top: 16px;">
+                    <div class="col" style="max-width: 300px;">
+                        <label class="form-label" style="color:var(--warning);">NẾU KHÔNG CÓ CÁI NÀO THOẢ MÃN (ELSE):</label>
+                        <input type="text" id="cond-else-val" class="form-control" value="${step.config.elseVal || ''}" placeholder="Giá trị mặc định...">
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Handle Events inside CONDITIONAL
+        document.getElementById('cond-op').addEventListener('change', (e) => {
+            if (e.target.value === 'IS_EMPTY' || e.target.value === 'NOT_EMPTY') {
+                document.getElementById('cond-compare-area').classList.add('hidden');
+            } else {
+                document.getElementById('cond-compare-area').classList.remove('hidden');
+            }
+        });
+
+        document.getElementById('cond-comp-type').addEventListener('change', (e) => {
+            const area = document.getElementById('cond-comp-val-area');
+            if (e.target.value === 'VALUE') area.innerHTML = `<input type="text" id="cond-comp-val" class="form-control" placeholder="Giá trị">`;
+            else area.innerHTML = `<select id="cond-comp-val" class="form-control">${optHtml}</select>`;
+        });
+
+        document.getElementById('cond-then-type').addEventListener('change', (e) => {
+            const thenValInput = document.getElementById('cond-then-val');
+            if (e.target.value === 'VALUE') {
+                const inp = document.createElement('input'); inp.type='text'; inp.id='cond-then-val'; inp.className='form-control'; inp.placeholder='Giá trị...';
+                thenValInput.replaceWith(inp);
+            } else {
+                const sel = document.createElement('select'); sel.id='cond-then-val'; sel.className='form-control'; sel.innerHTML = optHtml;
+                thenValInput.replaceWith(sel);
+            }
+        });
+
+        const rList = document.getElementById('cond-rules-list');
+        step.config.rules.forEach((r, idx) => {
+            const tag = document.createElement('div'); 
+            tag.style = "background:var(--bg-card); padding:8px 12px; border:1px solid var(--border); border-radius:6px; display:flex; justify-content:space-between; font-size:13px; align-items:center;";
+            let condText = r.op === 'IS_EMPTY' || r.op === 'NOT_EMPTY' ? r.op : `${r.op} ${r.compareType === 'COLUMN' ? '[Cột: '+r.compareVal+']' : r.compareVal}`;
+            let thenText = r.thenType === 'COLUMN' ? `[Cột:${r.thenVal}]` : r.thenVal;
+            tag.innerHTML = `<span>NẾU <b>[${r.ifCol}]</b> ${condText} ➔ ĐẦU RA LÀ: <b>${thenText}</b></span> <button class="btn-icon" data-idx="${idx}" style="width:20px;height:20px;">✕</button>`;
+            rList.appendChild(tag);
+        });
+
+        rList.addEventListener('click', (e) => {
+            if (e.target.closest('button')) {
+                step.config.rules.splice(e.target.closest('button').dataset.idx, 1);
+                recalculatePipeline();
+                renderConfigPanel();
+            }
+        });
+
+        document.getElementById('cond-add-rule').addEventListener('click', () => {
+            const r = {
+                ifCol: document.getElementById('cond-if-col').value,
+                op: document.getElementById('cond-op').value,
+                compareType: document.getElementById('cond-comp-type').value,
+                compareVal: document.getElementById('cond-comp-val') ? document.getElementById('cond-comp-val').value : "",
+                thenType: document.getElementById('cond-then-type').value,
+                thenVal: document.getElementById('cond-then-val').value,
+            };
+            if (r.ifCol && r.thenVal !== undefined) {
+                step.config.rules.push(r);
+                recalculatePipeline();
+                renderConfigPanel();
+            }
+        });
+
+        document.getElementById('cond-new-col').addEventListener('input', (e) => { step.config.newColName = e.target.value; recalculatePipeline(); });
+        document.getElementById('cond-else-val').addEventListener('input', (e) => { step.config.elseVal = e.target.value; recalculatePipeline(); });
+    }
+
+    /** BƯỚC MATH COMPUTE (TOÁN HỌC) **/
+    else if (step.type === 'MATH_COMPUTE') {
+        dynamicPane.innerHTML = `
+            <h3 class="config-title">Công Thức Toán Học (+ - * /)</h3>
+            <p class="config-desc">Thực hiện các phép tính số học giữa 2 cột, hoặc giữa 1 cột với giá trị cố định (Ví dụ: Tính Chênh Lệch, % Tăng Trưởng).</p>
+
+            <div class="row" style="margin-bottom: 16px;">
+                <div class="col" style="max-width: 300px;">
+                    <label class="form-label">Tên Cột Kết Quả Mới (Ví dụ: Cột Chênh Lệch)</label>
+                    <input type="text" id="math-new-col" class="form-control" value="${step.config.newColName || ''}" placeholder="Nhập tên cột đầu ra">
+                </div>
+            </div>
+
+            <div style="background: rgba(0,0,0,0.2); padding: 16px; border-radius: 8px; border: 1px bordered var(--border);">
+                <div class="row" style="align-items:flex-end; margin-bottom: 12px; max-width:800px;">
+                    <div class="col" style="flex:2;">
+                        <label class="form-label">Lấy giá trị Cột 1</label>
+                        <select id="math-col1" class="form-control"><option value="">-- Chọn Cột --</option>${optHtml}</select>
+                    </div>
+                    <div class="col" style="flex:1;">
+                        <label class="form-label">Phép Toán</label>
+                        <select id="math-op" class="form-control">
+                            <option value="-">Trừ (-)</option>
+                            <option value="+">Cộng (+)</option>
+                            <option value="*">Nhân (x)</option>
+                            <option value="/">Chia (/)</option>
+                            <option value="%_CHANGE">% Tăng Trưởng</option>
+                        </select>
+                    </div>
+                    <div class="col" style="flex:2;">
+                        <label class="form-label">Cột 2 / Hoặc Số Cố Định</label>
+                        <select id="math-type2" class="form-control" style="margin-bottom: 4px;">
+                            <option value="COLUMN">Với Cột Khác</option>
+                            <option value="VALUE">Với Số Cố Định</option>
+                        </select>
+                        <div id="math-val2-container">
+                            <!-- JS render -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        if (step.config.col1) document.getElementById('math-col1').value = step.config.col1;
+        if (step.config.op) document.getElementById('math-op').value = step.config.op;
+        if (step.config.type2) document.getElementById('math-type2').value = step.config.type2;
+        
+        const renderVal2 = () => {
+            const container = document.getElementById('math-val2-container');
+            if (document.getElementById('math-type2').value === 'COLUMN') {
+                container.innerHTML = `<select id="math-val2" class="form-control"><option value="">-- Chọn Cột --</option>${optHtml}</select>`;
+                if (step.config.col2) document.getElementById('math-val2').value = step.config.col2;
+            } else {
+                container.innerHTML = `<input type="number" id="math-val2" class="form-control" placeholder="Nhập số tự do" value="${step.config.val2 || ''}">`;
+            }
+            // Bind internal event
+            document.getElementById('math-val2').addEventListener('change', (e) => {
+                if (document.getElementById('math-type2').value === 'COLUMN') step.config.col2 = e.target.value;
+                else step.config.val2 = e.target.value;
+                recalculatePipeline();
+            });
+        };
+        renderVal2();
+
+        // Bind events
+        document.getElementById('math-new-col').addEventListener('input', (e) => { step.config.newColName = e.target.value; recalculatePipeline(); });
+        document.getElementById('math-col1').addEventListener('change', (e) => { step.config.col1 = e.target.value; recalculatePipeline(); });
+        document.getElementById('math-op').addEventListener('change', (e) => { step.config.op = e.target.value; recalculatePipeline(); });
+        document.getElementById('math-type2').addEventListener('change', (e) => { 
+            step.config.type2 = e.target.value; 
+            renderVal2(); 
+            recalculatePipeline(); 
+        });
+    }
+
     /** BƯỚC GROUP BY (PIVOT) **/
     else if (step.type === 'GROUP_BY') {
         dynamicPane.innerHTML = `
@@ -431,9 +642,10 @@ function renderConfigPanel() {
                 </div>
                 <div class="col">
                      <label class="form-label" style="display:inline-block; margin-right:10px;">Phương pháp Join</label>
-                     <select id="vlk-join" class="form-control" style="width:150px; display:inline-block; padding: 6px;">
-                        <option value="LEFT">Left Join (VLOOKUP)</option>
-                        <option value="INNER">Inner Join</option>
+                     <select id="vlk-join" class="form-control" style="width:220px; display:inline-block; padding: 6px;">
+                        <option value="LEFT">Left Join (Gắn thêm cột)</option>
+                        <option value="INNER">Inner Join (Chỉ lấy dòng Khớp)</option>
+                        <option value="ANTI">Anti Join (Chỉ lấy dòng Trật)</option>
                      </select>
                 </div>
             </div>
@@ -451,6 +663,20 @@ function renderConfigPanel() {
                 </div>
 
                 <div style="margin-top: 16px;">
+                    <hr style="opacity: 0.2; margin-bottom: 12px;" />
+                    <div class="row" style="align-items:flex-end;">
+                        <div class="col" style="max-width: 350px;">
+                            <label class="form-label" style="display:flex; align-items:center; gap: 8px; cursor:pointer; color:var(--primary);">
+                                <input type="checkbox" id="vlk-flag-check" ${step.config.enableFlag ? 'checked' : ''} style="width:16px;height:16px; cursor:pointer;">
+                                <span>Sinh cột đánh dấu Khớp (Có/Không)?</span>
+                            </label>
+                            <input type="text" id="vlk-flag-col" class="form-control" style="margin-top:8px; ${step.config.enableFlag ? 'display:block;' : 'display:none;'}" placeholder="Nhập tên cột (Mặc định: Trang_Thai_Khop)" value="${step.config.flagColName || ''}">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 16px;">
+                    <hr style="opacity: 0.2; margin-bottom: 12px;" />
                     <label class="form-label">Các Giỏ / Cột phụ rinh sang Bảng chính:</label>
                     <div id="vlk-grab-list" style="margin-bottom: 8px;"></div>
                     <div class="row" style="align-items:flex-end;">
@@ -507,6 +733,17 @@ function renderConfigPanel() {
             document.getElementById('vlk-join').addEventListener('change', (e) => { step.config.joinType = e.target.value; recalculatePipeline(); });
             document.getElementById('vlk-base').addEventListener('change', (e) => { step.config.baseKey = e.target.value; recalculatePipeline(); });
             document.getElementById('vlk-secondary').addEventListener('change', (e) => { step.config.lookupKey = e.target.value; recalculatePipeline(); });
+            
+            document.getElementById('vlk-flag-check').addEventListener('change', (e) => { 
+                step.config.enableFlag = e.target.checked; 
+                document.getElementById('vlk-flag-col').style.display = e.target.checked ? 'block' : 'none';
+                if (e.target.checked && !step.config.flagColName) {
+                    step.config.flagColName = "Trang_Thai_Khop";
+                    document.getElementById('vlk-flag-col').value = step.config.flagColName;
+                }
+                recalculatePipeline(); 
+            });
+            document.getElementById('vlk-flag-col').addEventListener('input', (e) => { step.config.flagColName = e.target.value; recalculatePipeline(); });
         }
 
         // File upload vlookup
