@@ -4,88 +4,103 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DataX Pipeline Studio</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Thêm font chuyên nghiệp -->
+    <!-- Thư viện x-data-spreadsheet (Local) -->
+    <link rel="stylesheet" href="xspreadsheet.css">
+    <script src="xspreadsheet.js"></script>
+
     <link rel="stylesheet" href="style.css">
     <script src="./xlsx.full.min.js"></script>
     <script src="pipeline-engine.js" defer></script>
     <script src="app-studio.js" defer></script>
 </head>
-<body>
+<body class="light-theme">
     <!-- Overlay Loading Thông báo chung -->
     <div id="global-loading" class="global-loading hidden">
         <div class="spinner-xl"></div>
         <p id="global-loading-text">Đang xử lý...</p>
     </div>
 
+    <!-- Header bar kiểu ứng dụng Desktop -->
+    <header class="app-header">
+        <div class="brand">
+            <div class="logo"></div>
+            <h1>DataX Studio</h1>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-primary btn-sm" id="btn-export-final">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                XUẤT RA EXCEL
+            </button>
+        </div>
+    </header>
+
     <div class="app-container">
-        <!-- ÁI TRÁI: DANH SÁCH BƯỚC (PIPELINE RECIPE) -->
-        <aside class="sidebar recipe-panel">
-            <div class="brand">
-                <div class="logo"></div>
-                <h2>DataX Studio</h2>
+        <!-- CỘT TRÁI: DANH SÁCH BƯỚC -->
+        <aside class="sidebar sidebar-left recipe-panel">
+            <div class="recipe-header" style="justify-content: space-between; display: flex; align-items: center;">
+                <h3>Luồng Kịch Bản (Pipeline)</h3>
+                <div style="display:flex; gap: 4px;">
+                    <button class="btn-icon" title="Mở Kịch Bản" id="btn-import-preset">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    </button>
+                    <button class="btn-icon" title="Lưu Kịch Bản" id="btn-export-preset">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                    </button>
+                    <input type="file" id="preset-file-input" accept=".json" hidden>
+                </div>
             </div>
             
-            <div class="recipe-header">
-                <h3>Luồng Kịch Bản</h3>
-                <button class="btn btn-icon" id="btn-pipeline-options" title="Tuỳ chọn">⚙</button>
-            </div>
-
-            <div class="pipeline-steps" id="pipeline-steps">
-                <!-- Javascript sẽ render vào đây -->
-            </div>
-
-            <div class="add-step-wrapper">
-                <button class="btn btn-outline w-full text-left" id="btn-add-step">+ Thêm Công Đoạn</button>
-                <div class="dropdown-menu hidden" id="dropdown-add-step">
-                    <a href="#" data-action="FILTER">Lọc Dữ Liệu (Filter)</a>
-                    <a href="#" data-action="VLOOKUP">Trộn Data (VLOOKUP)</a>
-                    <a href="#" data-action="GROUP_BY">Gộp Nhóm (Group/Pivot)</a>
-                    <a href="#" data-action="CONDITIONAL_COLUMN">Thêm Cột Logic (IF/THEN)</a>
-                    <a href="#" data-action="MATH_COMPUTE">Công Thức Toán Học (+ - * /)</a>
-                    <a href="#" data-action="SELECT_COLUMNS">Xào Cột (Select/Rename)</a>
+            <div class="pipeline-steps-wrapper">
+                <div class="add-step-wrapper">
+                    <button class="btn btn-add w-full text-left" id="btn-add-step">+ Thêm Công Đoạn</button>
+                    <div class="dropdown-menu hidden" id="dropdown-add-step">
+                        <a href="#" data-action="FILTER">Lọc Dữ Liệu (Filter)</a>
+                        <a href="#" data-action="VLOOKUP">Trộn Data (VLOOKUP)</a>
+                        <a href="#" data-action="GROUP_BY">Gộp Nhóm (Group/Pivot)</a>
+                        <a href="#" data-action="CONDITIONAL_COLUMN">Thêm Cột Logic (IF/THEN)</a>
+                        <a href="#" data-action="MATH_COMPUTE">Công Thức Toán Học (+ - * /)</a>
+                        <a href="#" data-action="SELECT_COLUMNS">Xào Cột (Select/Rename)</a>
+                    </div>
+                </div>
+                <div class="pipeline-steps" id="pipeline-steps">
+                    <!-- Javascript sẽ render vào đây -->
                 </div>
             </div>
         </aside>
 
-        <!-- MAIN AREA -->
-        <main class="main-workspace">
-            
-            <!-- VÙNG CẤU HÌNH (STEP CONFIGURATION) -->
-            <section class="config-panel" id="config-panel">
+        <!-- CENTER: SPREADSHEET MAIN DATA -->
+        <main class="main-workspace spreadsheet-panel">
+            <div class="table-toolbar">
+                <div class="toolbar-left">
+                    <h3 class="data-title">Live Data Grid</h3>
+                    <div class="info-badges">
+                        <span id="preview-row-count" class="badge badge-blue">0 dòng</span>
+                        <span id="preview-col-count" class="badge badge-gray">0 cột</span>
+                        <div id="preview-mini-loading" class="mini-spinner hidden"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="table-wrapper" style="padding: 0; display:flex; flex-direction:column; overflow:hidden;" id="x-spreadsheet-wrapper">
+                <!-- x-data-spreadsheet will render here -->
+                <div id="x-spreadsheet-container" style="flex:1;"></div>
+            </div>
+        </main>
+
+        <!-- CỘT PHẢI: CONFIGURATION PANEL -->
+        <aside class="sidebar sidebar-right config-panel" id="config-panel">
+            <div class="config-header">
+                <h3>Bảng Thuộc Tính (Properties)</h3>
+            </div>
+            <div class="config-body">
                 <div class="empty-state" id="config-empty">
-                    <p>Chọn một công đoạn bên trái để cấu hình.</p>
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2" style="margin-bottom: 12px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <p>Chọn một block Công Đoạn ở lề trái<br>để điều chỉnh tuỳ chọn tại đây.</p>
                 </div>
                 <!-- Vùng chứa form cấu hình động do JS render -->
                 <div id="config-dynamic" class="hidden"></div>
-            </section>
-
-            <!-- VÙNG QUAN SÁT (DATA PREVIEW) -->
-            <section class="preview-panel">
-                <div class="preview-header">
-                    <div class="preview-info">
-                        <h3>Live Preview <span>(100 dòng đầu)</span></h3>
-                        <span id="preview-row-count" class="badge">0 dòng (Full)</span>
-                        <span id="preview-col-count" class="badge">0 cột</span>
-                        <div id="preview-mini-loading" class="mini-spinner hidden"></div>
-                    </div>
-                    <button class="btn btn-primary" id="btn-export-final">
-                        Xuất Toàn Bộ Excel
-                    </button>
-                </div>
-                
-                <div class="table-wrapper">
-                    <table id="preview-table">
-                        <thead id="preview-thead">
-                            <!-- JS Render Header -->
-                        </thead>
-                        <tbody id="preview-tbody">
-                            <!-- JS Render Rows -->
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-        </main>
+            </div>
+        </aside>
     </div>
 </body>
 </html>
