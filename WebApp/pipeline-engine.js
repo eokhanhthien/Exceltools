@@ -41,31 +41,125 @@ function checkSingleCondition(cellVal, op, targetVal) {
     return false;
 }
 
-// Đọc file -> Json Array (Multi-Sheet)
+// Parsing data từ ExcelJS worksheet với font-aware repair
+async function extractSheetData(worksheet, headerRowIndex = 0, autoFixFonts = true, encodingType = 'AUTO') {
+    const data = [];
+    let headers = [];
+
+    // Lấy dòng tiêu đề (Dòng 1 trong ExcelJS là Index 1)
+    const headerRow = worksheet.getRow(headerRowIndex + 1);
+    
+    // Thu thập Headers
+    headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        let val = cell.text || "";
+        
+        // Nhận diện font để sửa lỗi (Font-Aware)
+        const fontName = cell.font && cell.font.name ? cell.font.name : "";
+        if (autoFixFonts) {
+            if (fontName.startsWith('.Vn')) {
+                val = VietEncoder.fix(val, 'TCVN3');
+            } else if (fontName.startsWith('VNI')) {
+                val = VietEncoder.fix(val, 'VNI');
+            }
+        }
+        
+        headers[colNumber - 1] = val || `Column${colNumber}`;
+    });
+
+    // Duyệt dữ liệu từ dòng sau Header
+    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        if (rowNumber <= headerRowIndex + 1) return;
+
+        const rowData = {};
+        headers.forEach((header, index) => {
+            const cell = row.getCell(index + 1);
+            let val = cell.value;
+            
+            // Xử lý Rich Text (Mảng các fragment có font riêng)
+            if (val && val.richText) {
+                val = val.richText.map(rt => {
+                    let text = rt.text || "";
+                    const fName = (rt.font && rt.font.name) ? rt.font.name.toUpperCase() : "";
+                    if (autoFixFonts) {
+                        if (fName.includes('.VN')) text = VietEncoder.fix(text, 'TCVN3');
+                        else if (fName.includes('VNI')) text = VietEncoder.fix(text, 'VNI');
+                    }
+                    return text;
+                }).join("");
+            } 
+            // Xử lý công thức (formula)
+            else if (val && typeof val === 'object' && val.result !== undefined) {
+                val = val.result;
+            }
+
+            // Sửa lỗi Font dựa trên style của Ô (Cell Formatting) - Nếu không phải Rich Text
+            if (!cell.value || !cell.value.richText) {
+                const fontName = (cell.font && cell.font.name) ? cell.font.name.toUpperCase() : "";
+                if (autoFixFonts && typeof val === 'string' && val !== "") {
+                    if (fontName.includes('.VN')) {
+                        val = VietEncoder.fix(val, 'TCVN3');
+                    } else if (fontName.includes('VNI')) {
+                        val = VietEncoder.fix(val, 'VNI');
+                    }
+                }
+            }
+
+            rowData[header] = val === null || val === undefined ? "" : val;
+        });
+        data.push(rowData);
+    });
+
+    // Phân tích bổ sung (Nếu nạp CSV hoặc Font info bị mất)
+    let finalDetected = 'NONE';
+    if (autoFixFonts && data.length > 0 && typeof VietEncoder !== 'undefined') {
+        const detected = (encodingType === 'AUTO') ? VietEncoder.detect(data) : encodingType;
+        if (detected !== 'NONE') {
+            finalDetected = detected;
+            data.forEach(row => {
+                for (let key in row) {
+                    if (typeof row[key] === 'string') row[key] = VietEncoder.fix(row[key], detected);
+                }
+            });
+            headers = headers.map(h => VietEncoder.fix(h, detected));
+        }
+    }
+
+    return { headers, data, detectedEncoding: finalDetected };
+}
+
+// Đọc file -> Json Array (Sử dụng ExcelJS)
 async function readExcelFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
             try {
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
+                const buffer = e.target.result;
+                const workbook = new ExcelJS.Workbook();
+                await workbook.xlsx.load(buffer);
                 
                 const sheetsData = {};
-                workbook.SheetNames.forEach(sheetName => {
-                    const worksheet = workbook.Sheets[sheetName];
-                    const rawData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-                    sheetsData[sheetName] = {
-                        headers: rawData.length > 0 ? Object.keys(rawData[0]) : [],
-                        data: rawData
-                    };
-                });
+                const sheetNames = [];
                 
+                workbook.eachSheet(async (worksheet) => {
+                    sheetNames.push(worksheet.name);
+                    // Lưu ý: eachSheet trong ExcelJS có thể gây race condition nếu không await
+                    // Nhưng ở đây ta trích xuất đồng bộ từng sheet cho đơn giản
+                });
+
+                // Trích xuất sheet đầu tiên mặc định
+                const firstSheet = workbook.getWorksheet(sheetNames[0]);
+                const firstSheetResult = await extractSheetData(firstSheet, 0);
+
                 resolve({
                     fileName: file.name,
-                    sheetNames: workbook.SheetNames, // Danh sách các sheet
-                    sheetsData: sheetsData           // Map Tên Sheet -> { headers, data }
+                    workbook: workbook,              // Cache lại ExcelJS workbook
+                    sheetNames: sheetNames, 
+                    sheetsData: {
+                        [sheetNames[0]]: firstSheetResult
+                    }           
                 });
             } catch (err) {
+                console.error("ExcelJS Load Error:", err);
                 reject(err);
             }
         };
@@ -298,11 +392,34 @@ async function runFullPipeline(rootData, steps) {
     return currentData;
 }
 
-// Hàm export kết quả
-function exportPipelineResult(dataArray, fileName) {
-    const ws = XLSX.utils.json_to_sheet(dataArray);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Data");
-    XLSX.writeFile(wb, fileName);
+// Hàm export kết quả (Sử dụng ExcelJS)
+async function exportPipelineResult(dataArray, fileName) {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Data');
+    
+    if (dataArray.length > 0) {
+        // Thiết lập header và dữ liệu
+        const headers = Object.keys(dataArray[0]);
+        worksheet.columns = headers.map(h => ({ header: h, key: h }));
+        worksheet.addRows(dataArray);
+        
+        // Style cho header (Đậm, màu nền nhẹ)
+        const headerRow = worksheet.getRow(1);
+        headerRow.font = { bold: true };
+        headerRow.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFF0F0F0' }
+        };
+    }
+    
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    window.URL.revokeObjectURL(url);
 }
 

@@ -2,8 +2,11 @@
 
 // --- STATE QUẢN LÝ ---
 const AppState = {
-    rootFileCache: null,    // Cache toàn bộ các Sheet của File Gốc { fileName, sheetNames, sheetsData }
+    rootFileCache: null,    // Cache toàn bộ các Sheet của File Gốc { fileName, workbook, sheetNames, sheetsData }
     rootSelectedSheet: "",  // Tên Sheet đang dùng làm mốc
+    rootHeaderRowIndex: 0,  // Dòng bắt đầu làm tiêu đề (0-indexed)
+    rootAutoFixFonts: true, // Tự động sửa lỗi font (TCVN3/VNI) - Mặc định BẬT
+    rootEncodingType: 'AUTO', // Loại bảng mã (TCVN3, VNI, AUTO)
     rootData: [],           // Dữ liệu gốc ở node LOAD
     rootHeaders: [],        // Tiêu đề cột gốc
     steps: [],              // Danh sách các bước
@@ -367,29 +370,98 @@ function renderConfigPanel() {
             `;
         }
 
+        let rootHeaderRowHtml = '';
+        let rootFontFixHtml = '';
+        if (AppState.rootFileCache) {
+            rootHeaderRowHtml = `
+                <div class="form-group" style="margin-top: 15px;">
+                    <label class="form-label" style="font-weight: 600; color: var(--primary);">📍 Dòng làm Tiêu đề (Header Row Index)</label>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="number" id="root-header-index" class="form-control" value="${AppState.rootHeaderRowIndex || 0}" min="0" style="width:80px;" />
+                        <span style="font-size:12px; color:#666;">(Dòng ${(AppState.rootHeaderRowIndex || 0) + 1})</span>
+                    </div>
+                </div>
+            `;
+
+            // Font repair is giờ đây hoàn toàn tự động và ẩn đi để tối ưu trải nghiệm "Không Cần Chạm"
+            rootFontFixHtml = `
+                <div id="encoding-status-box" style="margin-top: 15px; padding: 10px; background: #f0f7ff; border-radius: 8px; border: 1px solid #d0e7ff;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:16px;">✨</span>
+                        <div>
+                            <div style="font-weight: 600; font-size:13px; color: var(--primary);">Tự động sửa lỗi Font (Smart)</div>
+                            <p id="encoding-info-text" style="font-size:11px; color:#666; margin:2px 0 0 0;">Đang quét định dạng ô...</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         dynamicPane.innerHTML = `
             <h3 class="config-title">Nguồn Dữ Liệu Gốc</h3>
-            <p class="config-desc">Nơi bắt nguồn của dòng chảy dữ liệu. Hệ thống tự động Trích xuất Đa Sheet.</p>
+            <p class="config-desc">Nạp dữ liệu qua <b>ExcelJS Engine</b>. Tự động nhận diện font TCVN3/VNI dựa trên Cell Style.</p>
             <div class="pipeline-dropzone" id="root-dropzone">
                 <div style="font-size: 24px; color: var(--primary);">📥</div>
                 <div style="margin-top: 5px; font-weight: 500;">Bấm tải lên hoặc Kéo File vào đây</div>
                 <input type="file" id="root-file-input" accept=".xlsx,.xls,.csv" hidden />
             </div>
-            ${AppState.rootData.length > 0 ? `<p style="margin-top: 15px; color: var(--success); font-weight: bold;">✅ File đã tải. Đang nạp: ${AppState.rootData.length.toLocaleString()} dòng</p>` : ''}
+            ${AppState.rootData.length > 0 ? `<p style="margin-top: 15px; color: var(--success); font-weight: bold;">✅ OK: ${AppState.rootData.length.toLocaleString()} dòng</p>` : ''}
             ${rootSheetSelectorHtml}
+            ${rootHeaderRowHtml}
+            ${rootFontFixHtml}
         `;
 
-        if (document.getElementById('root-sheet-select')) {
-            document.getElementById('root-sheet-select').addEventListener('change', (e) => {
-                const sheet = e.target.value;
-                AppState.rootSelectedSheet = sheet;
-                AppState.rootData = AppState.rootFileCache.sheetsData[sheet].data;
-                AppState.rootHeaders = AppState.rootFileCache.sheetsData[sheet].headers;
+        const triggerReparse = async () => {
+            if (AppState.rootFileCache && AppState.rootFileCache.workbook) {
+                const sheetName = AppState.rootSelectedSheet;
+                const worksheet = AppState.rootFileCache.workbook.getWorksheet(sheetName);
+                
+                // Mặc định luôn sửa lỗi (AppState.rootAutoFixFonts = true)
+                const result = await extractSheetData(worksheet, AppState.rootHeaderRowIndex, true, 'AUTO');
+                
+                AppState.rootData = result.data;
+                AppState.rootHeaders = result.headers;
+                
+                const infoEl = document.getElementById('encoding-info-text');
+                if (infoEl) {
+                    if (result.detectedEncoding && result.detectedEncoding !== 'NONE') {
+                        infoEl.innerHTML = `🚀 Đã sửa lỗi font: <b>${result.detectedEncoding}</b>`;
+                    } else {
+                        infoEl.innerHTML = "✨ Dữ liệu sạch (Unicode).";
+                    }
+                }
+                
                 recalculatePipeline();
                 renderPreviewAtActiveStep();
-                renderPipelineSteps(); // Update counts in left sidebar
+                renderPipelineSteps();
+            }
+        };
+
+        if (document.getElementById('root-sheet-select')) {
+            document.getElementById('root-sheet-select').addEventListener('change', async (e) => {
+                const sheetName = e.target.value;
+                AppState.rootSelectedSheet = sheetName;
+                
+                // Trích xuất data từ workbook cache với settings hiện tại
+                const worksheet = AppState.rootFileCache.workbook.getWorksheet(sheetName);
+                const result = await extractSheetData(worksheet, AppState.rootHeaderRowIndex, AppState.rootAutoFixFonts, AppState.rootEncodingType);
+                
+                AppState.rootData = result.data;
+                AppState.rootHeaders = result.headers;
+                
+                recalculatePipeline();
+                renderPreviewAtActiveStep();
+                renderConfigPanel();
             });
         }
+
+        if (document.getElementById('root-header-index')) {
+            document.getElementById('root-header-index').addEventListener('change', (e) => {
+                AppState.rootHeaderRowIndex = parseInt(e.target.value) || 0;
+                triggerReparse();
+            });
+        }
+
 
         // Sự kiện Upload Root
         const dropzone = document.getElementById('root-dropzone');
@@ -404,10 +476,17 @@ function renderConfigPanel() {
                     const result = await readExcelFile(e.target.files[0]);
                     AppState.rootFileCache = result;
                     AppState.rootSelectedSheet = result.sheetNames[0];
-                    AppState.rootData = result.sheetsData[AppState.rootSelectedSheet].data;
-                    AppState.rootHeaders = result.sheetsData[AppState.rootSelectedSheet].headers;
+                    AppState.rootHeaderRowIndex = 0;
+                    AppState.rootAutoFixFonts = true;
+                    AppState.rootEncodingType = 'AUTO';
+                    
+                    // Lấy data từ sheet đầu tiên
+                    const sheetData = result.sheetsData[AppState.rootSelectedSheet];
+                    AppState.rootData = sheetData.data;
+                    AppState.rootHeaders = sheetData.headers;
+
                     await recalculatePipeline();
-                    renderConfigPanel(); // Cập nhật lại UI để hiện Dropdown chọn Sheet
+                    renderConfigPanel(); 
                 } catch(e) {
                     alert("Lỗi đọc file: " + e.message);
                 } finally {
@@ -1072,9 +1151,9 @@ document.getElementById('btn-export-final').addEventListener('click', () => {
     document.getElementById('global-loading').classList.remove('hidden');
     document.getElementById('global-loading-text').innerText = "Đang trích xuất toàn bộ dữ liệu...";
     
-    setTimeout(() => {
+    setTimeout(async () => {
         try {
-             exportPipelineResult(finalData, `DataX_Output_${Date.now()}.xlsx`);
+             await exportPipelineResult(finalData, `DataX_Output_${Date.now()}.xlsx`);
         } catch(e) {
             alert("Lỗi xuất file: " + e.message);
         } finally {
