@@ -176,18 +176,28 @@ function applyStepToData(sourceData, step) {
     try {
         if (step.type === 'FILTER') {
             if (config.conditions && config.conditions.length > 0) {
+                const logicType = config.logicType || 'AND';
                 result = result.filter(row => {
-                    let isMatch = true;
+                    let matches = [];
                     for (const cond of config.conditions) {
                         const cellVal = String(row[cond.col] || "").trim().toUpperCase();
                         const filterVal = String(cond.val || "").trim().toUpperCase();
                         
-                        if (cond.op === 'CONTAINS' && !cellVal.includes(filterVal)) isMatch = false;
-                        if (cond.op === 'EQUALS' && cellVal !== filterVal) isMatch = false;
-                        if (cond.op === 'NOT_EQUALS' && cellVal === filterVal) isMatch = false;
-                        if (cond.op === 'STARTS_WITH' && !cellVal.startsWith(filterVal)) isMatch = false;
+                        let condMatch = false;
+                        if (cond.op === 'CONTAINS') condMatch = cellVal.includes(filterVal);
+                        else if (cond.op === 'EQUALS') condMatch = (cellVal === filterVal);
+                        else if (cond.op === 'NOT_EQUALS') condMatch = (cellVal !== filterVal);
+                        else if (cond.op === 'STARTS_WITH') condMatch = cellVal.startsWith(filterVal);
+                        else if (cond.op === 'IN') {
+                            const list = filterVal.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
+                            condMatch = list.includes(cellVal);
+                        }
+                        
+                        matches.push(condMatch);
                     }
-                    return isMatch;
+
+                    if (logicType === 'OR') return matches.some(m => m === true);
+                    return matches.every(m => m === true);
                 });
             }
         } 
@@ -373,6 +383,85 @@ function applyStepToData(sourceData, step) {
                     }
                     return newRow;
                 });
+            }
+        }
+
+        else if (step.type === 'COMPARE') {
+            if (config.compareData && config.baseKey && config.compareKey && config.baseCompareCol && config.secondaryCompareCol) {
+                const compareMap = new Map();
+                for (const lRow of config.compareData) {
+                    const k = String(lRow[config.compareKey] || "").trim().toUpperCase();
+                    if (!compareMap.has(k)) {
+                        compareMap.set(k, lRow);
+                    }
+                }
+
+                let comparedResult = [];
+
+                for (const row of result) {
+                    const k = String(row[config.baseKey] || "").trim().toUpperCase();
+                    const secRow = compareMap.get(k);
+
+                    if (secRow) {
+                        // Trích xuất số tiền để tính biến động
+                        let v1 = parseFloat(String(row[config.baseCompareCol]).replace(/,/g, ''));
+                        let v2 = parseFloat(String(secRow[config.secondaryCompareCol]).replace(/,/g, ''));
+                        v1 = isNaN(v1) ? 0 : v1;
+                        v2 = isNaN(v2) ? 0 : v2;
+
+                        const diff = v2 - v1; // Chênh lệch (Sau - Trước)
+                        const absDiff = Math.abs(diff);
+
+                        const newRow = {};
+                        newRow[config.baseKey] = row[config.baseKey]; // CIF
+                        newRow[`${config.baseCompareCol} (Trước)`] = v1;
+                        newRow[`${config.baseCompareCol} (Sau)`] = v2;
+                        newRow[`Biến động (+/-)`] = diff;
+
+                        // Chuyển lại giá trị absDiff ngầm để phục vụ filter/sort
+                        newRow.__absDiff = absDiff;
+
+                        // Các cột còn lại (gộp Text - lấy từ Base)
+                        for (const key in row) {
+                            if (key !== config.baseKey && key !== config.baseCompareCol) {
+                                newRow[key] = row[key];
+                            }
+                        }
+
+                        comparedResult.push(newRow);
+                    }
+                }
+
+                // Áp dụng điều kiện lọc biến động
+                if (config.conditionType === 'THRESHOLD_INC') {
+                    const threshold = parseFloat(config.diffThreshold) || 0;
+                    comparedResult = comparedResult.filter(r => r['Biến động (+/-)'] >= Math.abs(threshold));
+                } else if (config.conditionType === 'THRESHOLD_DEC') {
+                    const threshold = parseFloat(config.diffThreshold) || 0;
+                    comparedResult = comparedResult.filter(r => r['Biến động (+/-)'] <= -Math.abs(threshold));
+                } else if (config.conditionType === 'TOP_X_INC') {
+                    const limit = parseInt(config.topXValue) || 10;
+                    comparedResult.sort((a, b) => b['Biến động (+/-)'] - a['Biến động (+/-)']);
+                    comparedResult = comparedResult.slice(0, limit);
+                } else if (config.conditionType === 'TOP_X_DEC') {
+                    const limit = parseInt(config.topXValue) || 10;
+                    comparedResult.sort((a, b) => a['Biến động (+/-)'] - b['Biến động (+/-)']);
+                    comparedResult = comparedResult.slice(0, limit);
+                } else if (config.conditionType === 'THRESHOLD') {
+                    // Backwards compatibility with old absolute Threshold
+                    const threshold = parseFloat(config.diffThreshold) || 0;
+                    comparedResult = comparedResult.filter(r => r.__absDiff >= threshold);
+                } else if (config.conditionType === 'TOP_X') {
+                    // Backwards backward compatibility with old absolute Top X
+                    const limit = parseInt(config.topXValue) || 10;
+                    comparedResult.sort((a, b) => b.__absDiff - a.__absDiff);
+                    comparedResult = comparedResult.slice(0, limit);
+                }
+
+                // Xoá cột tạm __absDiff
+                comparedResult.forEach(r => delete r.__absDiff);
+
+                result = comparedResult;
             }
         }
     } catch (e) {

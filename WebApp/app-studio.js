@@ -20,12 +20,13 @@ function createStep(type) {
     let title = "";
     let config = {};
 
-    if (type === 'FILTER') { title = "Lọc Dữ Liệu"; config = { conditions: [] }; }
+    if (type === 'FILTER') { title = "Lọc Dữ Liệu"; config = { conditions: [], logicType: "AND" }; }
     else if (type === 'VLOOKUP') { title = "Merge Bảng Data"; config = { joinType: 'LEFT', lookupData: null, grabColumns: [], enableFlag: true, flagColName: 'Trang_Thai_Khop' }; }
     else if (type === 'GROUP_BY') { title = "Gộp (Group By)"; config = { aggregates: [] }; }
     else if (type === 'CONDITIONAL_COLUMN') { title = "Thêm Cột (Logic IF)"; config = { newColName: "", rules: [], elseVal: "", elseType: "VALUE" }; }
     else if (type === 'MATH_COMPUTE') { title = "Công Thức Toán Học"; config = { newColName: "", expression: "" }; }
     else if (type === 'SELECT_COLUMNS') { title = "Chọn/Đổi Tên Cột"; config = { columns: [] }; }
+    else if (type === 'COMPARE') { title = "So Sánh 2 File"; config = { compareData: null, baseKey: "", compareKey: "", baseCompareCol: "", secondaryCompareCol: "", conditionType: "THRESHOLD_INC", diffThreshold: 50000000, topXValue: 30 }; }
 
     return { id, type, title, config, disabled: false };
 }
@@ -103,12 +104,13 @@ function renderPipelineSteps() {
 }
 
 function getStepDesc(step) {
-    if (step.type === 'FILTER') return step.config.conditions.length ? `${step.config.conditions.length} điều kiện lọc` : 'Chưa cấu hình';
+    if (step.type === 'FILTER') return step.config.conditions.length ? `Lọc ${step.config.conditions.length} điều kiện (${step.config.logicType || 'AND'})` : 'Chưa cấu hình';
     if (step.type === 'VLOOKUP') return step.config.lookupData ? `Join ${step.config.grabColumns.length} cột qua ${step.config.baseKey || '?'}` : 'Chưa nhập file';
     if (step.type === 'GROUP_BY') return step.config.groupCol ? `Nhóm theo ${step.config.groupCol}` : 'Chưa cấu hình';
     if (step.type === 'CONDITIONAL_COLUMN') return step.config.newColName ? `Tạo cột: ${step.config.newColName}` : 'Chưa cấu hình';
     if (step.type === 'MATH_COMPUTE') return step.config.newColName ? `Làm toán: ${step.config.newColName}` : 'Chưa cấu hình';
     if (step.type === 'SELECT_COLUMNS') return step.config.columns.length ? `Giữ ${step.config.columns.length} cột xuất` : 'Chưa cấu hình';
+    if (step.type === 'COMPARE') return step.config.compareData ? `So sánh cột ${step.config.baseCompareCol || '?'}` : 'Chưa cấu hình file';
     return '';
 }
 
@@ -183,6 +185,9 @@ if (document.getElementById('btn-export-preset')) {
             let clone = JSON.parse(JSON.stringify(s));
             if (clone.type === 'VLOOKUP' && clone.config.lookupData) {
                 clone.config.lookupData = null; 
+            }
+            if (clone.type === 'COMPARE' && clone.config.compareData) {
+                clone.config.compareData = null;
             }
             return clone;
         });
@@ -504,68 +509,107 @@ function renderConfigPanel() {
 
     /** BƯỚC FILTER **/
     if (step.type === 'FILTER') {
+        // Luôn đảm bảo có ít nhất 1 dòng lọc nếu người dùng chưa cấu hình gì
+        if (!step.config.conditions || step.config.conditions.length === 0) {
+            step.config.conditions = [{ col: availableHeaders[0] || "", op: "CONTAINS", val: "" }];
+        }
+
         dynamicPane.innerHTML = `
-            <h3 class="config-title">Bộ Lọc Dữ Liệu</h3>
-            <p class="config-desc">Thiết lập các điều kiện để loại bỏ những dòng không thỏa mãn.</p>
-            
-            <div id="filter-list" style="margin-bottom: 12px; display:flex; flex-wrap:wrap;"></div>
-            
-            <div class="box-panel">
-                <div class="row" style="align-items:flex-end;">
-                    <div class="col">
-                        <label class="form-label">Chọn Móc Cột</label>
-                        <select id="flt-col" class="form-control"><option value="">-- Chọn --</option>${optHtml}</select>
-                    </div>
-                    <div class="col">
-                        <label class="form-label">Toán tử</label>
-                        <select id="flt-op" class="form-control">
-                            <option value="CONTAINS">Chứa giá trị</option>
-                            <option value="EQUALS">Bằng (=)</option>
-                            <option value="NOT_EQUALS">Không bằng (!=)</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="row" style="align-items:flex-end; margin-top:8px;">
-                    <div class="col">
-                        <label class="form-label">Giá trị (chuỗi)</label>
-                        <input type="text" id="flt-val" class="form-control" placeholder="VD: THÀNH CÔNG">
-                    </div>
-                    <button class="btn btn-primary" style="height: 35px;" id="flt-add">Thêm Lọc</button>
+            <div class="filter-logic-container">
+                <span class="logic-label">LOGIC:</span>
+                <div class="filter-logic-group" id="logic-group">
+                    <button class="btn-logic-toggle ${step.config.logicType === 'AND' ? 'active' : ''}" data-logic="AND">TẤT CẢ (AND)</button>
+                    <button class="btn-logic-toggle ${step.config.logicType === 'OR' ? 'active' : ''}" data-logic="OR">BẤT KỲ (OR)</button>
                 </div>
             </div>
-        `;
-        
-        // Hiển thị list
-        const listUI = document.getElementById('filter-list');
-        step.config.conditions.forEach((c, idx) => {
-            const tag = document.createElement('span'); tag.className = 'filter-tag';
-            tag.innerHTML = `${c.col} <i>${c.op}</i> <b>${c.val}</b> <button data-idx="${idx}">✕</button>`;
-            listUI.appendChild(tag);
-        });
 
-        // Xoá điều kiện
-        listUI.addEventListener('click', (e) => {
-            if (e.target.tagName === 'BUTTON') {
-                step.config.conditions.splice(e.target.dataset.idx, 1);
+            <div id="filter-conditions-list"></div>
+            
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:12px; border-top:1px dashed var(--border);">
+                <button class="btn btn-add" id="btn-add-condition" style="flex:1; height:32px; font-size:11px; margin-right:8px;">+ THÊM ĐIỀU KIỆN</button>
+                <button class="btn-text-danger" id="btn-clear-all" style="font-size:10px;">Xoá tất cả</button>
+            </div>
+        `;
+
+        const renderConditions = () => {
+            const list = document.getElementById('filter-conditions-list');
+            list.innerHTML = "";
+            step.config.conditions.forEach((cond, idx) => {
+                const item = document.createElement('div');
+                item.className = 'condition-item';
+                item.innerHTML = `
+                    <div style="display:flex; align-items:center; margin-bottom:6px;">
+                        <span class="cond-index">${idx+1}</span>
+                        <select class="form-control cond-col" data-idx="${idx}" style="height:28px; padding:2px 8px; font-size:12px; font-weight:600;">
+                            <option value="">-- Chọn cột --</option>
+                            ${optHtml}
+                        </select>
+                        <button class="btn-icon btn-del-cond" data-idx="${idx}" style="margin-left:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:100px 1fr; gap:6px;">
+                        <select class="form-control cond-op" data-idx="${idx}" style="height:28px; padding:2px 8px; font-size:12px;">
+                            <option value="CONTAINS" ${cond.op === 'CONTAINS' ? 'selected' : ''}>Chứa</option>
+                            <option value="EQUALS" ${cond.op === 'EQUALS' ? 'selected' : ''}>Bằng (=)</option>
+                            <option value="NOT_EQUALS" ${cond.op === 'NOT_EQUALS' ? 'selected' : ''}>Khác (!=)</option>
+                            <option value="STARTS_WITH" ${cond.op === 'STARTS_WITH' ? 'selected' : ''}>Bắt đầu</option>
+                            <option value="IN" ${cond.op === 'IN' ? 'selected' : ''}>List (IN)</option>
+                        </select>
+                        <input type="text" class="form-control cond-val" data-idx="${idx}" placeholder="Giá trị..." value="${cond.val || ""}" style="height:28px; padding:2px 8px; font-size:12px;" />
+                    </div>
+                    ${cond.op === 'IN' ? `<p style="font-size:9px; color:var(--primary); margin-top:4px;">* Dùng dấu phẩy hoặc chấm phẩy</p>` : ''}
+                `;
+                list.appendChild(item);
+                if (cond.col) item.querySelector('.cond-col').value = cond.col;
+            });
+
+            // Gắn sự kiện
+            list.querySelectorAll('.cond-col').forEach(el => el.addEventListener('change', (e) => {
+                step.config.conditions[e.target.dataset.idx].col = e.target.value;
+                recalculatePipeline();
+            }));
+            list.querySelectorAll('.cond-op').forEach(el => el.addEventListener('change', (e) => {
+                step.config.conditions[e.target.dataset.idx].op = e.target.value;
+                recalculatePipeline();
+                renderConditions();
+            }));
+            list.querySelectorAll('.cond-val').forEach(el => el.addEventListener('blur', (e) => {
+                step.config.conditions[e.target.dataset.idx].val = e.target.value;
+                recalculatePipeline();
+                renderPipelineSteps();
+            }));
+            list.querySelectorAll('.btn-del-cond').forEach(el => el.addEventListener('click', (e) => {
+                const idx = e.target.closest('button').dataset.idx;
+                step.config.conditions.splice(idx, 1);
                 recalculatePipeline();
                 renderConfigPanel();
+                renderPipelineSteps();
+            }));
+        };
+
+        renderConditions();
+
+        document.getElementById('btn-add-condition').addEventListener('click', () => {
+            step.config.conditions.push({ col: availableHeaders[0] || "", op: "CONTAINS", val: "" });
+            renderConditions();
+        });
+
+        document.getElementById('btn-clear-all').addEventListener('click', () => {
+            if (confirm("Xoá tất cả điều kiện lọc?")) {
+                step.config.conditions = [];
+                recalculatePipeline();
+                renderConfigPanel();
+                renderPipelineSteps();
             }
         });
 
-        // Thêm điều kiện
-        const fltAddBtn = document.getElementById('flt-add');
-        if (fltAddBtn) {
-            fltAddBtn.addEventListener('click', () => {
-                const c = document.getElementById('flt-col').value;
-                const o = document.getElementById('flt-op').value;
-                const v = document.getElementById('flt-val').value;
-                if (c && v) {
-                    step.config.conditions.push({col: c, op: o, val: v});
-                    recalculatePipeline();
-                    renderConfigPanel();
-                }
+        document.querySelectorAll('.btn-logic-toggle').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                step.config.logicType = e.target.dataset.logic;
+                recalculatePipeline();
+                renderConfigPanel();
+                renderPipelineSteps();
             });
-        }
+        });
     }
 
     /** BƯỚC THÊM CỘT LOGIC (IF / THEN) **/
@@ -834,72 +878,91 @@ function renderConfigPanel() {
         });
     }
 
-    /** BƯỚC GROUP BY (PIVOT) **/
     else if (step.type === 'GROUP_BY') {
         dynamicPane.innerHTML = `
-            <h3 class="config-title">Gộp Bảng (Pivot / Group By)</h3>
-            <p class="config-desc">Định cấu hình cách nhóm dữ liệu giống hệt Pivot Tables.</p>
-            
-            <div class="row mb-16">
-                <div class="col" style="max-width: 250px;">
-                    <label class="form-label">Cột Key Gốc (Gom theo)</label>
-                    <select id="grp-col" class="form-control"><option value="">-- Chọn --</option>${optHtml}</select>
-                </div>
+            <div class="logic-header" style="background:#e8fdf5; padding:12px; border-radius:8px; border:1px solid #d1fae5; margin-bottom:16px;">
+                <h3 class="config-title" style="color:#059669; margin:0;">📊 Gộp Data & Tính Toán</h3>
+                <p class="config-desc" style="margin-top:4px; font-size:12px;">Gộp các dòng trùng lặp dựa trên một cột mốc.</p>
             </div>
 
-            <div style="border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px;">
-                <label class="form-label">Tính toán mớ (Aggregations)</label>
-                <div id="agg-list" style="margin-bottom: 12px;"></div>
-                
-                <div class="row" style="align-items:flex-end; max-width: 500px;">
-                    <div class="col">
-                        <select id="agg-tgt" class="form-control"><option value="">-- Cột tính --</option>${optHtml}</select>
-                    </div>
-                    <div class="col">
-                        <select id="agg-op" class="form-control">
-                            <option value="SUM">Tổng Số (Sum)</option>
-                            <option value="COUNT">Đếm Dòng (Count)</option>
-                            <option value="JOIN_STRING">Nét Chuỗi Hợp Cầm (Join Text)</option>
-                        </select>
-                    </div>
-                    <button class="btn btn-outline" style="height: 40px; margin-bottom: 2px;" id="agg-add">Thêm tính toán</button>
-                </div>
+            <div class="box-panel" style="margin-bottom:16px;">
+                <label class="form-label" style="font-weight:600; font-size:11px;">1. Cột mốc để Nhóm (Group By)</label>
+                <select id="group-col-select" class="form-control">
+                    <option value="">-- Chọn cột --</option>
+                    ${optHtml}
+                </select>
+                <p style="font-size:10px; color:#666; margin-top:4px;">Ví dụ: Nhóm theo ID Khách hàng.</p>
+            </div>
+
+            <div style="margin-top: 15px;">
+                <label class="form-label" style="font-weight:600; font-size:11px;">2. Các phép tính tổng hợp</label>
+                <div id="agg-list"></div>
+                <button class="btn btn-add w-full" id="btn-add-agg" style="margin-top:12px; height:32px; font-size:12px;">+ THÊM PHÉP TÍNH (SUM, COUNT...)</button>
             </div>
         `;
-        
-        // Cấu hình ban đầu
-        if (step.config.groupCol) document.getElementById('grp-col').value = step.config.groupCol;
-        
-        // Sự kiện thay đổi Group Key
-        document.getElementById('grp-col').addEventListener('change', (e) => {
+
+        const renderAggs = () => {
+            const list = document.getElementById('agg-list');
+            list.innerHTML = "";
+            (step.config.aggregates || []).forEach((agg, idx) => {
+                const item = document.createElement('div');
+                item.className = 'box-panel agg-item';
+                item.style.marginBottom = "8px";
+                item.style.padding = "10px";
+                item.style.background = "#fafafa";
+                item.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                        <span style="font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase;">Phép tính #${idx+1}</span>
+                        <button class="btn-icon btn-del-agg" data-idx="${idx}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:100px 1fr; gap:6px;">
+                        <select class="form-control agg-type" data-idx="${idx}">
+                            <option value="SUM" ${agg.type === 'SUM' ? 'selected' : ''}>TỔNG (SUM)</option>
+                            <option value="COUNT" ${agg.type === 'COUNT' ? 'selected' : ''}>ĐẾM DÒNG</option>
+                            <option value="JOIN_STRING" ${agg.type === 'JOIN_STRING' ? 'selected' : ''}>GỘP CHUỖI</option>
+                        </select>
+                        <select class="form-control agg-col" data-idx="${idx}">
+                            <option value="">-- Cột cần tính --</option>
+                            ${optHtml}
+                        </select>
+                    </div>
+                `;
+                list.appendChild(item);
+                if (agg.col) item.querySelector('.agg-col').value = agg.col;
+            });
+
+            // Events
+            list.querySelectorAll('.agg-type').forEach(el => el.addEventListener('change', (e) => {
+                step.config.aggregates[e.target.dataset.idx].type = e.target.value;
+                recalculatePipeline();
+            }));
+            list.querySelectorAll('.agg-col').forEach(el => el.addEventListener('change', (e) => {
+                step.config.aggregates[e.target.dataset.idx].col = e.target.value;
+                recalculatePipeline();
+            }));
+            list.querySelectorAll('.btn-del-agg').forEach(el => el.addEventListener('click', (e) => {
+                const btnIdx = e.target.closest('button').dataset.idx;
+                step.config.aggregates.splice(btnIdx, 1);
+                recalculatePipeline();
+                renderAggs();
+                renderPipelineSteps();
+            }));
+        };
+
+        if (step.config.groupCol) document.getElementById('group-col-select').value = step.config.groupCol;
+        renderAggs();
+
+        document.getElementById('group-col-select').addEventListener('change', (e) => {
             step.config.groupCol = e.target.value;
             recalculatePipeline();
+            renderPipelineSteps();
         });
 
-        // Hiển thị thẻ agg
-        const aggUI = document.getElementById('agg-list');
-        step.config.aggregates.forEach((a, idx) => {
-            const tag = document.createElement('span'); tag.className = 'filter-tag';
-            tag.innerHTML = `${a.type}(${a.col}) <button data-idx="${idx}">✕</button>`;
-            aggUI.appendChild(tag);
-        });
-
-        aggUI.addEventListener('click', (e) => {
-            if (e.target.tagName === 'BUTTON') {
-                step.config.aggregates.splice(e.target.dataset.idx, 1);
-                recalculatePipeline();
-                renderConfigPanel();
-            }
-        });
-
-        document.getElementById('agg-add').addEventListener('click', () => {
-            const tgt = document.getElementById('agg-tgt').value;
-            const op = document.getElementById('agg-op').value;
-            if (tgt) {
-                step.config.aggregates.push({ col: tgt, type: op });
-                recalculatePipeline();
-                renderConfigPanel();
-            }
+        document.getElementById('btn-add-agg').addEventListener('click', () => {
+            if (!step.config.aggregates) step.config.aggregates = [];
+            step.config.aggregates.push({ type: "SUM", col: availableHeaders[0] || "" });
+            renderAggs();
+            recalculatePipeline();
         });
     }
 
@@ -1125,6 +1188,155 @@ function renderConfigPanel() {
                     renderConfigPanel(); // Reload panel để bung hộp thoại
                 } catch(e) {
                     alert("Lỗi đọc File Map: " + e.message);
+                } finally {
+                    document.getElementById('global-loading').classList.add('hidden');
+                }
+            }
+        });
+    }
+    
+    /** BƯỚC SO SÁNH (COMPARE) **/
+    else if (step.type === 'COMPARE') {
+        let cmpSourceOpts = `<option value="UPLOAD">-- 📥 Tải File Excel Mới --</option>`;
+        if (AppState.rootFileCache && AppState.rootFileCache.sheetNames.length > 0) {
+            cmpSourceOpts = AppState.rootFileCache.sheetNames.map(s => 
+                `<option value="${s}">[File Gốc] Tab: ${s}</option>`
+            ).join('') + cmpSourceOpts;
+        }
+
+        dynamicPane.innerHTML = `
+            <h3 class="config-title">So Sánh 2 File</h3>
+            <p class="config-desc">So sánh biến động giá trị giữa luồng hiện tại và dữ liệu file mới.</p>
+            
+            <div class="box-panel" style="margin-bottom: 16px;">
+                <label class="form-label" style="font-weight:600;">Chọn Nguồn Đối Chiếu (File Sau)</label>
+                <select id="cmp-source-select" class="form-control" style="width:100%; margin-top:4px;">
+                    <option value="">-- Chọn Nguồn --</option>
+                    ${cmpSourceOpts}
+                </select>
+                
+                <div id="cmp-upload-area" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #ccc;">
+                    <button class="btn btn-outline" id="btn-compare-file">📥 Bấm Tải File Đối Chiếu Lên</button>
+                    <input type="file" id="compare-file" accept=".xlsx,.xls,.csv" hidden>
+                </div>
+                
+                <p id="cmp-filename" style="margin-top: 10px; font-size: 13px; color: var(--success); font-weight:600;">
+                    ${step.config.compareData ? `✓ Đã nạp dữ liệu so sánh (${step.config.compareData.length.toLocaleString()} dòng)` : "❌ Chưa có dữ liệu so sánh"}
+                </p>
+            </div>
+
+            <div id="compare-config-area" class="${step.config.compareData ? '' : 'hidden'}">
+                <div class="row" style="align-items:flex-end;">
+                    <div class="col">
+                        <label class="form-label">Cột Mốc Bảng HIỆN TẠI</label>
+                        <select id="cmp-base-key" class="form-control"><option value="">-- Chọn Khóa --</option>${optHtml}</select>
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Cột Mốc File So Sánh</label>
+                        <select id="cmp-sec-key" class="form-control"><option value="">-- Chọn Khóa --</option></select>
+                    </div>
+                </div>
+
+                <div class="row" style="align-items:flex-end; margin-top: 10px;">
+                    <div class="col">
+                        <label class="form-label">Cột Gía Trị HIỆN TẠI</label>
+                        <select id="cmp-base-col" class="form-control"><option value="">-- Cột Tiền (Trước) --</option>${optHtml}</select>
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Cột Gía Trị MỚI</label>
+                        <select id="cmp-sec-col" class="form-control"><option value="">-- Cột Tiền (Sau) --</option></select>
+                    </div>
+                </div>
+
+                <div style="margin-top: 16px;">
+                    <hr style="opacity: 0.2; margin-bottom: 12px;" />
+                    <label class="form-label" style="font-weight:600;">Điều kiện lọc biến động</label>
+                    <div class="row" style="margin-top:4px;">
+                        <div class="col">
+                            <select id="cmp-condition-type" class="form-control">
+                                <option value="THRESHOLD_INC" ${step.config.conditionType === 'THRESHOLD_INC' ? 'selected' : ''}>Tăng (>= Ngưỡng)</option>
+                                <option value="THRESHOLD_DEC" ${step.config.conditionType === 'THRESHOLD_DEC' ? 'selected' : ''}>Giảm (>= Ngưỡng nhập)</option>
+                                <option value="TOP_X_INC" ${step.config.conditionType === 'TOP_X_INC' ? 'selected' : ''}>Lấy Top X tăng nhiều nhất</option>
+                                <option value="TOP_X_DEC" ${step.config.conditionType === 'TOP_X_DEC' ? 'selected' : ''}>Lấy Top X giảm nhiều nhất</option>
+                                <option value="THRESHOLD" ${step.config.conditionType === 'THRESHOLD' ? 'selected' : ''}>Biến động tuyệt đối (Cũ)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row" style="margin-top:8px;" id="cmp-cond-input-wrap">
+                        <div class="col">
+                            <input type="number" id="cmp-threshold-val" class="form-control" style="${(!step.config.conditionType || step.config.conditionType.startsWith('THRESHOLD')) ? '' : 'display:none;'}" placeholder="Nhập ngưỡng (VD: 50000000)" value="${step.config.diffThreshold}">
+                            <input type="number" id="cmp-topx-val" class="form-control" style="${(step.config.conditionType && step.config.conditionType.startsWith('TOP_X')) ? '' : 'display:none;'}" placeholder="Nhập số X (VD: 30)" value="${step.config.topXValue}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Render bindings
+        if (step.config.compareData) {
+            if (step.config.baseKey) document.getElementById('cmp-base-key').value = step.config.baseKey;
+            if (step.config.baseCompareCol) document.getElementById('cmp-base-col').value = step.config.baseCompareCol;
+            
+            const hSec = step.config.compareData.length > 0 ? Object.keys(step.config.compareData[0]) : [];
+            const hp = hSec.map(h => `<option value="${h}">${h}</option>`).join('');
+            
+            const dKey = document.getElementById('cmp-sec-key');
+            dKey.innerHTML = `<option value="">-- Chọn Khóa --</option>${hp}`;
+            if (step.config.compareKey) dKey.value = step.config.compareKey;
+
+            const dCol = document.getElementById('cmp-sec-col');
+            dCol.innerHTML = `<option value="">-- Cột Tiền (Sau) --</option>${hp}`;
+            if (step.config.secondaryCompareCol) dCol.value = step.config.secondaryCompareCol;
+            
+            // Events
+            document.getElementById('cmp-base-key').addEventListener('change', (e) => { step.config.baseKey = e.target.value; recalculatePipeline(); });
+            document.getElementById('cmp-sec-key').addEventListener('change', (e) => { step.config.compareKey = e.target.value; recalculatePipeline(); });
+            document.getElementById('cmp-base-col').addEventListener('change', (e) => { step.config.baseCompareCol = e.target.value; recalculatePipeline(); });
+            document.getElementById('cmp-sec-col').addEventListener('change', (e) => { step.config.secondaryCompareCol = e.target.value; recalculatePipeline(); });
+
+            document.getElementById('cmp-condition-type').addEventListener('change', (e) => {
+                step.config.conditionType = e.target.value;
+                document.getElementById('cmp-threshold-val').style.display = e.target.value.startsWith('THRESHOLD') ? 'block' : 'none';
+                document.getElementById('cmp-topx-val').style.display = e.target.value.startsWith('TOP_X') ? 'block' : 'none';
+                recalculatePipeline();
+            });
+
+            document.getElementById('cmp-threshold-val').addEventListener('change', (e) => { step.config.diffThreshold = Number(e.target.value); recalculatePipeline(); });
+            document.getElementById('cmp-topx-val').addEventListener('change', (e) => { step.config.topXValue = Number(e.target.value); recalculatePipeline(); });
+        }
+
+        // Upload Events
+        const cmpSourceSelect = document.getElementById('cmp-source-select');
+        const cmpUploadArea = document.getElementById('cmp-upload-area');
+        
+        cmpSourceSelect.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (val === 'UPLOAD') {
+                cmpUploadArea.style.display = 'block';
+            } else if (val) {
+                cmpUploadArea.style.display = 'none';
+                step.config.compareData = AppState.rootFileCache.sheetsData[val].data;
+                document.getElementById('cmp-filename').innerText = `Thành công! Đã bốc data từ Tab: ${val}`;
+                recalculatePipeline();
+                renderConfigPanel();
+            } else {
+                cmpUploadArea.style.display = 'none';
+            }
+        });
+
+        document.getElementById('btn-compare-file').addEventListener('click', () => document.getElementById('compare-file').click());
+        document.getElementById('compare-file').addEventListener('change', async (e) => {
+            if (e.target.files.length > 0) {
+                document.getElementById('global-loading').classList.remove('hidden');
+                document.getElementById('global-loading-text').innerText = "Đang rải file Index cho chức năng So Sánh...";
+                try {
+                    const result = await readExcelFile(e.target.files[0]);
+                    const sName = result.sheetNames[0];
+                    step.config.compareData = result.sheetsData[sName].data; 
+                    document.getElementById('cmp-filename').innerText = "Thành công nạp file phụ!";
+                    renderConfigPanel();
+                } catch(e) {
+                    alert("Lỗi đọc File So Sánh: " + e.message);
                 } finally {
                     document.getElementById('global-loading').classList.add('hidden');
                 }
