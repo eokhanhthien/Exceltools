@@ -76,7 +76,19 @@ function renderPipelineSteps() {
     document.querySelectorAll('.step-node-container').forEach(node => {
         node.addEventListener('click', (e) => {
             if (e.target.closest('.btn-toggle-step') || e.target.closest('.btn-del-step')) return; // Bỏ qua nếu bấm nút con
-            AppState.activeStepId = node.dataset.id;
+            
+            const clickedId = node.dataset.id;
+            
+            // Nếu click vào step đang active -> Toggle (Đóng panel)
+            if (AppState.activeStepId === clickedId) {
+                if (typeof window._closeConfigPanel === 'function') {
+                    window._closeConfigPanel();
+                }
+                return;
+            }
+
+            // Nếu click step khác -> Mở panel cấu hình của step đó
+            AppState.activeStepId = clickedId;
             renderPipelineSteps();
             renderConfigPanel();
             renderPreviewAtActiveStep();
@@ -175,35 +187,53 @@ async function recalculatePipeline(silent = false) {
 
 // --- QUẢN LÝ KỊCH BẢN (PRESET: SAVE / LOAD) ---
 if (document.getElementById('btn-export-preset')) {
+
+    // === LƯU KỊCH BẢN: Chỉ Cấu Hình (Nhẹ) ===
     document.getElementById('btn-export-preset').addEventListener('click', () => {
         if (AppState.steps.length === 0) {
             alert("Chưa có bước Pipeline nào để xuất Kịch bản!");
             return;
         }
-        // Clone và dọn dẹp data nặng trước khi xuất (nếu có cache)
+        // Clone và dọn dẹp data nặng trước khi xuất
         const exportSteps = AppState.steps.map(s => {
             let clone = JSON.parse(JSON.stringify(s));
-            if (clone.type === 'VLOOKUP' && clone.config.lookupData) {
-                clone.config.lookupData = null; 
-            }
-            if (clone.type === 'COMPARE' && clone.config.compareData) {
-                clone.config.compareData = null;
-            }
+            if (clone.type === 'VLOOKUP' && clone.config.lookupData) clone.config.lookupData = null;
+            if (clone.type === 'COMPARE' && clone.config.compareData) clone.config.compareData = null;
             return clone;
         });
 
-        const presetStr = JSON.stringify(exportSteps, null, 2);
-        const blob = new Blob([presetStr], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = "DataX_Preset.json";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const payload = { version: 2, mode: 'config_only', steps: exportSteps };
+        _downloadJson(payload, `DataX_Preset_${_dateStr()}.json`);
     });
 
+    // === LƯU KỊCH BẢN ĐẦY ĐỦ: Kèm Toàn Bộ Data Phụ ===
+    document.getElementById('btn-export-preset-full').addEventListener('click', () => {
+        if (AppState.steps.length === 0) {
+            alert("Chưa có bước Pipeline nào để xuất Kịch bản!");
+            return;
+        }
+
+        const hasHeavy = AppState.steps.some(s =>
+            (s.type === 'VLOOKUP' && s.config.lookupData) ||
+            (s.type === 'COMPARE' && s.config.compareData)
+        );
+
+        if (!hasHeavy) {
+            alert("Không phát hiện data phụ (VLOOKUP / So Sánh) để lưu kèm.\n\nHãy dùng nút Lưu Thường, hoặc nạp data phụ vào pipeline trước.");
+            return;
+        }
+
+        if (!confirm("Lưu kịch bản ĐẦY ĐỦ sẽ nhúng tất cả dữ liệu bảng phụ (VLOOKUP/Compare) vào file JSON.\n\nFile có thể nặng nếu data lớn, nhưng khi mở lại sẽ auto sẵn sàng, không cần tải lại file phụ.\n\nTiếp tục?")) return;
+
+        // Giữ nguyên toàn bộ data (bao gồm lookupData và compareData)
+        const exportSteps = AppState.steps.map(s => JSON.parse(JSON.stringify(s)));
+
+        const payload = { version: 2, mode: 'full_data', steps: exportSteps };
+        _downloadJson(payload, `DataX_Preset_FULL_${_dateStr()}.json`);
+        alert(`✅ Đã lưu kịch bản đầy đủ!\n\nKhi mở lại file này, chỉ cần áp file Excel chính là pipeline chạy ngay, không cần nạp lại file phụ.`);
+    });
+
+    // === NẠP KỊCH BẢN ===
     document.getElementById('btn-import-preset').addEventListener('click', () => {
         document.getElementById('preset-file-input').click();
     });
@@ -214,25 +244,78 @@ if (document.getElementById('btn-export-preset')) {
             const reader = new FileReader();
             reader.onload = (evt) => {
                 try {
-                    const stepsObj = JSON.parse(evt.target.result);
-                    if (Array.isArray(stepsObj)) {
-                        AppState.steps = stepsObj;
-                        AppState.activeStepId = stepsObj.length > 0 ? stepsObj[0].id : 'ROOT';
-                        renderPipelineSteps();
-                        renderConfigPanel();
-                        recalculatePipeline();
-                        alert("Đã nạp Kịch bản Tự động hóa thành công!");
+                    const parsed = JSON.parse(evt.target.result);
+
+                    // Hỗ trợ cả 2 định dạng: cũ (Array) và mới (Object có version)
+                    let stepsObj;
+                    let mode = 'config_only';
+
+                    if (Array.isArray(parsed)) {
+                        // Định dạng cũ: array trực tiếp
+                        stepsObj = parsed;
+                    } else if (parsed.version === 2 && Array.isArray(parsed.steps)) {
+                        stepsObj = parsed.steps;
+                        mode = parsed.mode || 'config_only';
                     } else {
                         alert("File Kịch Bản không đúng định dạng chuẩn của DataX!");
+                        return;
+                    }
+
+                    AppState.steps = stepsObj;
+                    AppState.activeStepId = stepsObj.length > 0 ? stepsObj[0].id : 'ROOT';
+                    renderPipelineSteps();
+                    renderConfigPanel();
+                    recalculatePipeline();
+
+                    if (mode === 'full_data') {
+                        // Đếm các bước đã có data kèm
+                        const loadedCount = stepsObj.filter(s =>
+                            (s.type === 'VLOOKUP' && s.config.lookupData) ||
+                            (s.type === 'COMPARE' && s.config.compareData)
+                        ).length;
+                        alert(`✅ Đã nạp Kịch bản ĐẦY ĐỦ!\n\n${loadedCount} bước đã có sẵn data phụ.\nChỉ cần áp file Excel chính là pipeline sẽ chạy ngay!`);
+                    } else {
+                        alert("✅ Đã nạp Kịch bản cấu hình!\n\nNếu pipeline có bước VLOOKUP hoặc So Sánh, hãy nạp lại file phụ tương ứng.");
                     }
                 } catch (err) {
                     alert("Lỗi đọc File Kịch Bản: " + err.message);
                 }
             };
             reader.readAsText(file);
-            e.target.value = ''; // Reset input để cho phép import lại cùng 1 file
+            e.target.value = ''; // Reset để cho phép import lại cùng 1 file
         }
     });
+}
+
+// Hàm tiện ích: Tải JSON xuống máy
+function _downloadJson(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// Hàm tiện ích: Tạo chuỗi ngày cho tên file
+function _dateStr() {
+    const d = new Date();
+    return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}`;
+}
+
+// Hàm tiện ích: Chuyển index (0-based) sang ký hiệu cột Excel (A, B, ..., Z, AA, AB, ...)
+function _colLetter(n) {
+    let s = '';
+    n += 1; // 1-based
+    while (n > 0) {
+        const r = (n - 1) % 26;
+        s = String.fromCharCode(65 + r) + s;
+        n = Math.floor((n - 1) / 26);
+    }
+    return s;
 }
 
 // Lấy columns header của step TRƯỚC DOS
@@ -350,14 +433,18 @@ function renderPreviewAtActiveStep() {
 function renderConfigPanel() {
     const emptyState = document.getElementById('config-empty');
     const dynamicPane = document.getElementById('config-dynamic');
+    const panel       = document.getElementById('config-panel');
 
     dynamicPane.innerHTML = "";
     if (!AppState.activeStepId) {
         emptyState.classList.remove('hidden');
         dynamicPane.classList.add('hidden');
+        panel && panel.classList.remove('open'); // Ẩn panel khi không có step
         return;
     }
 
+    // Mở panel
+    if (panel) panel.classList.add('open');
     emptyState.classList.add('hidden');
     dynamicPane.classList.remove('hidden');
 
@@ -419,7 +506,7 @@ function renderConfigPanel() {
         const triggerReparse = async () => {
             if (AppState.rootFileCache && AppState.rootFileCache.workbook) {
                 const sheetName = AppState.rootSelectedSheet;
-                const worksheet = AppState.rootFileCache.workbook.getWorksheet(sheetName);
+                const worksheet = AppState.rootFileCache.workbook.Sheets[sheetName];
                 
                 // Mặc định luôn sửa lỗi (AppState.rootAutoFixFonts = true)
                 const result = await extractSheetData(worksheet, AppState.rootHeaderRowIndex, true, 'AUTO');
@@ -448,7 +535,7 @@ function renderConfigPanel() {
                 AppState.rootSelectedSheet = sheetName;
                 
                 // Trích xuất data từ workbook cache với settings hiện tại
-                const worksheet = AppState.rootFileCache.workbook.getWorksheet(sheetName);
+                const worksheet = AppState.rootFileCache.workbook.Sheets[sheetName];
                 const result = await extractSheetData(worksheet, AppState.rootHeaderRowIndex, AppState.rootAutoFixFonts, AppState.rootEncodingType);
                 
                 AppState.rootData = result.data;
@@ -505,7 +592,7 @@ function renderConfigPanel() {
     // RENDER CHO CÁC STEP CỤ THỂ
     const step = AppState.steps.find(s => s.id === AppState.activeStepId);
     const availableHeaders = getHeadersAtCurrentStep();
-    const optHtml = availableHeaders.map(h => `<option value="${h}">${h}</option>`).join('');
+    const optHtml = availableHeaders.map((h, i) => `<option value="${h}">${_colLetter(i)}: ${h}</option>`).join('');
 
     /** BƯỚC FILTER **/
     if (step.type === 'FILTER') {
@@ -1373,6 +1460,40 @@ document.getElementById('btn-export-final').addEventListener('click', () => {
         }
     }, 100);
 });
+
+// === CONFIG PANEL: click-outside để đóng ===
+(function () {
+    const panel = document.getElementById('config-panel');
+    if (!panel) return;
+
+    function closePanel() {
+        panel.classList.remove('open');
+        const stepIdBeforeClose = AppState.activeStepId;
+        AppState.activeStepId = null;
+        document.querySelectorAll('.step-card').forEach(c => c.classList.remove('active'));
+        document.querySelectorAll('.step-node-container').forEach(n => n.classList.remove('active'));
+        // Redraw ngay lập tức (panel là fixed overlay, canvas không bị che trong lúc animate)
+        AppState.activeStepId = stepIdBeforeClose;
+        renderPreviewAtActiveStep();
+        AppState.activeStepId = null;
+    }
+
+    // Click ngoài panel → đóng (mousedown để bắt trước click)
+    document.addEventListener('mousedown', (e) => {
+        if (!panel.classList.contains('open')) return;
+        if (panel.contains(e.target)) return;
+        if (e.target.closest('.step-node-container')) return;
+        if (e.target.closest('#btn-add-step')) return;
+        if (e.target.closest('#dropdown-add-step')) return;
+        closePanel();
+    });
+
+    // Nút X
+    const btnClose = document.getElementById('btn-close-config');
+    if (btnClose) btnClose.addEventListener('click', closePanel);
+
+    window._closeConfigPanel = closePanel;
+})();
 
 // INITIALIZE
 renderPipelineSteps();

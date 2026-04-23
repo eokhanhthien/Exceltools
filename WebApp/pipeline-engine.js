@@ -41,125 +41,108 @@ function checkSingleCondition(cellVal, op, targetVal) {
     return false;
 }
 
-// Parsing data từ ExcelJS worksheet với font-aware repair
+// Parsing data từ SheetJS worksheet với font-aware repair (Chunking)
 async function extractSheetData(worksheet, headerRowIndex = 0, autoFixFonts = true, encodingType = 'AUTO') {
-    const data = [];
-    let headers = [];
+    // sheet_to_json với header: 1 sẽ trả về mảng 2 chiều (bảng tính thô)
+    const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+    if (rawRows.length <= headerRowIndex) {
+        return { headers: [], data: [], detectedEncoding: 'NONE' };
+    }
 
-    // Lấy dòng tiêu đề (Dòng 1 trong ExcelJS là Index 1)
-    const headerRow = worksheet.getRow(headerRowIndex + 1);
-    
-    // Thu thập Headers
-    headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-        let val = cell.text || "";
-        
-        // Nhận diện font để sửa lỗi (Font-Aware)
-        const fontName = cell.font && cell.font.name ? cell.font.name : "";
-        if (autoFixFonts) {
-            if (fontName.startsWith('.Vn')) {
-                val = VietEncoder.fix(val, 'TCVN3');
-            } else if (fontName.startsWith('VNI')) {
-                val = VietEncoder.fix(val, 'VNI');
-            }
-        }
-        
-        headers[colNumber - 1] = val || `Column${colNumber}`;
+    const headers = rawRows[headerRowIndex].map((h, idx) => {
+        let val = String(h || "").trim();
+        return val || `Column${idx + 1}`;
     });
 
-    // Duyệt dữ liệu từ dòng sau Header
-    worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-        if (rowNumber <= headerRowIndex + 1) return;
+    const data = [];
+    let sampleForDetect = [];
+    
+    // Chunking settings
+    const CHUNK_SIZE = 5000;
+    
+    for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
+        const rawRow = rawRows[i];
+        
+        // Bỏ qua dòng trống hoàn toàn nếu mọi cell đều rỗng
+        if (rawRow.every(cell => cell === "")) continue;
 
         const rowData = {};
         headers.forEach((header, index) => {
-            const cell = row.getCell(index + 1);
-            let val = cell.value;
-            
-            // Xử lý Rich Text (Mảng các fragment có font riêng)
-            if (val && val.richText) {
-                val = val.richText.map(rt => {
-                    let text = rt.text || "";
-                    const fName = (rt.font && rt.font.name) ? rt.font.name.toUpperCase() : "";
-                    if (autoFixFonts) {
-                        if (fName.includes('.VN')) text = VietEncoder.fix(text, 'TCVN3');
-                        else if (fName.includes('VNI')) text = VietEncoder.fix(text, 'VNI');
-                    }
-                    return text;
-                }).join("");
-            } 
-            // Xử lý công thức (formula)
-            else if (val && typeof val === 'object' && val.result !== undefined) {
-                val = val.result;
-            }
-
-            // Sửa lỗi Font dựa trên style của Ô (Cell Formatting) - Nếu không phải Rich Text
-            if (!cell.value || !cell.value.richText) {
-                const fontName = (cell.font && cell.font.name) ? cell.font.name.toUpperCase() : "";
-                if (autoFixFonts && typeof val === 'string' && val !== "") {
-                    if (fontName.includes('.VN')) {
-                        val = VietEncoder.fix(val, 'TCVN3');
-                    } else if (fontName.includes('VNI')) {
-                        val = VietEncoder.fix(val, 'VNI');
-                    }
-                }
-            }
-
-            rowData[header] = val === null || val === undefined ? "" : val;
+            const val = rawRow[index];
+            rowData[header] = (val === null || val === undefined) ? "" : val;
         });
+        
         data.push(rowData);
-    });
+        
+        // Thu thập 100 dòng đầu tiên để test Font
+        if (autoFixFonts && sampleForDetect.length < 100) {
+            sampleForDetect.push(rowData);
+        }
 
-    // Phân tích bổ sung (Nếu nạp CSV hoặc Font info bị mất)
+        // Nhường quyền cho Browser mỗi 5000 dòng để UI không bị treo
+        if (i % CHUNK_SIZE === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    }
+
     let finalDetected = 'NONE';
     if (autoFixFonts && data.length > 0 && typeof VietEncoder !== 'undefined') {
-        const detected = (encodingType === 'AUTO') ? VietEncoder.detect(data) : encodingType;
-        if (detected !== 'NONE') {
-            finalDetected = detected;
-            data.forEach(row => {
+        // Chỉ dò mẫu trên 100 dòng đầu thay vì 200k dòng
+        finalDetected = (encodingType === 'AUTO') ? VietEncoder.detect(sampleForDetect) : encodingType;
+        
+        // Nếu phát hiện lỗi thì chạy Fix, và cũng chia Chunk
+        if (finalDetected !== 'NONE') {
+            for (let i = 0; i < data.length; i++) {
+                const row = data[i];
                 for (let key in row) {
-                    if (typeof row[key] === 'string') row[key] = VietEncoder.fix(row[key], detected);
+                    if (typeof row[key] === 'string' && row[key].length > 0) {
+                        row[key] = VietEncoder.fix(row[key], finalDetected);
+                    }
                 }
-            });
-            headers = headers.map(h => VietEncoder.fix(h, detected));
+                
+                // Nhường quyền cho Browser mỗi 5000 dòng
+                if (i % CHUNK_SIZE === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            }
+            
+            // Fix header
+            for (let i = 0; i < headers.length; i++) {
+                headers[i] = VietEncoder.fix(headers[i], finalDetected);
+            }
         }
     }
 
     return { headers, data, detectedEncoding: finalDetected };
 }
 
-// Đọc file -> Json Array (Sử dụng ExcelJS)
+// Đọc file -> Json Array (Sử dụng SheetJS - Tối ưu 200k+ dòng)
 async function readExcelFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
-                const buffer = e.target.result;
-                const workbook = new ExcelJS.Workbook();
-                await workbook.xlsx.load(buffer);
+                const buffer = new Uint8Array(e.target.result);
+                // Đọc workbook bằng SheetJS, bỏ qua các style phức tạp để load siêu tốc
+                const workbook = XLSX.read(buffer, { type: 'array' });
                 
-                const sheetsData = {};
-                const sheetNames = [];
+                const sheetNames = workbook.SheetNames;
                 
-                workbook.eachSheet(async (worksheet) => {
-                    sheetNames.push(worksheet.name);
-                    // Lưu ý: eachSheet trong ExcelJS có thể gây race condition nếu không await
-                    // Nhưng ở đây ta trích xuất đồng bộ từng sheet cho đơn giản
-                });
-
                 // Trích xuất sheet đầu tiên mặc định
-                const firstSheet = workbook.getWorksheet(sheetNames[0]);
+                const firstSheetName = sheetNames[0];
+                const firstSheet = workbook.Sheets[firstSheetName];
                 const firstSheetResult = await extractSheetData(firstSheet, 0);
 
                 resolve({
                     fileName: file.name,
-                    workbook: workbook,              // Cache lại ExcelJS workbook
+                    workbook: workbook,              // Cache lại SheetJS workbook
                     sheetNames: sheetNames, 
                     sheetsData: {
-                        [sheetNames[0]]: firstSheetResult
+                        [firstSheetName]: firstSheetResult
                     }           
                 });
             } catch (err) {
-                console.error("ExcelJS Load Error:", err);
+                console.error("SheetJS Load Error:", err);
                 reject(err);
             }
         };
@@ -361,7 +344,7 @@ function applyStepToData(sourceData, step) {
                         let outName = agg.col;
                         if (agg.type === 'SUM') outName = `Tổng_${agg.col}`;
                         else if (agg.type === 'COUNT') outName = `Đếm_${agg.col}`;
-                        else if (agg.type === 'JOIN_STRING') outName = `Chuỗi_${agg.col}`;
+                        else if (agg.type === 'JOIN_STRING') outName = agg.col;
 
                         if (agg.type === 'JOIN_STRING') {
                             finalRow[outName] = Array.from(row[internalKey]).join(" | ");
