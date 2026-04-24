@@ -41,108 +41,189 @@ function checkSingleCondition(cellVal, op, targetVal) {
     return false;
 }
 
-// Parsing data từ SheetJS worksheet với font-aware repair (Chunking)
-async function extractSheetData(worksheet, headerRowIndex = 0, autoFixFonts = true, encodingType = 'AUTO') {
-    // sheet_to_json với header: 1 sẽ trả về mảng 2 chiều (bảng tính thô)
-    const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-    if (rawRows.length <= headerRowIndex) {
-        return { headers: [], data: [], detectedEncoding: 'NONE' };
-    }
+// Mã nguồn của Web Worker (Được inject vào Blob)
+const WORKER_CODE = `
+    self.onmessage = function(e) {
+        if(e.data.type === 'INIT') {
+            try {
+                // Ensure correct relative paths
+                importScripts(e.data.basePath + '/xlsx.full.min.js');
+                importScripts(e.data.basePath + '/viet-encoder.js');
+                self.postMessage({ type: 'INIT_SUCCESS' });
+            } catch(err) {
+                self.postMessage({ type: 'ERROR', error: err.toString() });
+            }
+        } else if(e.data.type === 'READ_FILE') {
+            try {
+                const workbook = XLSX.read(e.data.buffer, { type: 'array' });
+                self.cachedWorkbook = workbook;
+                const sheetNames = workbook.SheetNames;
+                self.postMessage({ type: 'READ_SUCCESS', sheetNames: sheetNames });
+            } catch(err) {
+                self.postMessage({ type: 'ERROR', error: err.toString() });
+            }
+        } else if(e.data.type === 'EXTRACT_SHEET') {
+            try {
+                const { sheetName, headerRowIndex, autoFixFonts, encodingType, msgId } = e.data;
+                const worksheet = self.cachedWorkbook.Sheets[sheetName];
+                const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+                
+                if (rawRows.length <= headerRowIndex) {
+                    self.postMessage({ type: 'EXTRACT_SUCCESS', msgId: msgId, payloadStr: JSON.stringify({ headers: [], data: [], detectedEncoding: 'NONE' }) });
+                    return;
+                }
 
-    const headers = rawRows[headerRowIndex].map((h, idx) => {
-        let val = String(h || "").trim();
-        return val || `Column${idx + 1}`;
-    });
+                const headers = rawRows[headerRowIndex].map((h, idx) => {
+                    let val = String(h || "").trim();
+                    return val || 'Column' + (idx + 1);
+                });
 
-    const data = [];
-    let sampleForDetect = [];
-    
-    // Chunking settings
-    const CHUNK_SIZE = 5000;
-    
-    for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
-        const rawRow = rawRows[i];
-        
-        // Bỏ qua dòng trống hoàn toàn nếu mọi cell đều rỗng
-        if (rawRow.every(cell => cell === "")) continue;
+                const data = [];
+                let sampleForDetect = [];
 
-        const rowData = {};
-        headers.forEach((header, index) => {
-            const val = rawRow[index];
-            rowData[header] = (val === null || val === undefined) ? "" : val;
-        });
-        
-        data.push(rowData);
-        
-        // Thu thập 100 dòng đầu tiên để test Font
-        if (autoFixFonts && sampleForDetect.length < 100) {
-            sampleForDetect.push(rowData);
-        }
+                for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
+                    const rawRow = rawRows[i];
+                    if (rawRow.every(cell => cell === "")) continue;
 
-        // Nhường quyền cho Browser mỗi 5000 dòng để UI không bị treo
-        if (i % CHUNK_SIZE === 0) {
-            await new Promise(resolve => setTimeout(resolve, 0));
-        }
-    }
-
-    let finalDetected = 'NONE';
-    if (autoFixFonts && data.length > 0 && typeof VietEncoder !== 'undefined') {
-        // Chỉ dò mẫu trên 100 dòng đầu thay vì 200k dòng
-        finalDetected = (encodingType === 'AUTO') ? VietEncoder.detect(sampleForDetect) : encodingType;
-        
-        // Nếu phát hiện lỗi thì chạy Fix, và cũng chia Chunk
-        if (finalDetected !== 'NONE') {
-            for (let i = 0; i < data.length; i++) {
-                const row = data[i];
-                for (let key in row) {
-                    if (typeof row[key] === 'string' && row[key].length > 0) {
-                        row[key] = VietEncoder.fix(row[key], finalDetected);
+                    const rowData = {};
+                    headers.forEach((header, index) => {
+                        const val = rawRow[index];
+                        rowData[header] = (val === null || val === undefined) ? "" : val;
+                    });
+                    
+                    data.push(rowData);
+                    
+                    if (autoFixFonts && sampleForDetect.length < 100) {
+                        sampleForDetect.push(rowData);
                     }
                 }
-                
-                // Nhường quyền cho Browser mỗi 5000 dòng
-                if (i % CHUNK_SIZE === 0) {
-                    await new Promise(resolve => setTimeout(resolve, 0));
+
+                let finalDetected = 'NONE';
+                if (autoFixFonts && data.length > 0 && typeof VietEncoder !== 'undefined') {
+                    finalDetected = (encodingType === 'AUTO') ? VietEncoder.detect(sampleForDetect) : encodingType;
+                    if (finalDetected !== 'NONE') {
+                        for (let i = 0; i < data.length; i++) {
+                            const row = data[i];
+                            for (let key in row) {
+                                if (typeof row[key] === 'string' && row[key].length > 0) {
+                                    row[key] = VietEncoder.fix(row[key], finalDetected);
+                                }
+                            }
+                        }
+                        for (let i = 0; i < headers.length; i++) {
+                            headers[i] = VietEncoder.fix(headers[i], finalDetected);
+                        }
+                    }
                 }
-            }
-            
-            // Fix header
-            for (let i = 0; i < headers.length; i++) {
-                headers[i] = VietEncoder.fix(headers[i], finalDetected);
+
+                // Dùng JSON.stringify để serialize trước khi gởi, tránh lỗi tràn RAM Structured Cloning
+                self.postMessage({ 
+                    type: 'EXTRACT_SUCCESS', 
+                    msgId: msgId,
+                    payloadStr: JSON.stringify({ headers, data, detectedEncoding: finalDetected }) 
+                });
+            } catch(err) {
+                self.postMessage({ type: 'ERROR', msgId: e.data.msgId, error: err.toString() });
             }
         }
+    };
+`;
+
+// Lớp Wrapper cho Web Worker để tải Excel siêu tốc không làm đơ trình duyệt
+class ExcelWorkerAPI {
+    constructor() {
+        const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
+        this.worker = new Worker(URL.createObjectURL(blob));
+        this.basePath = location.href.substring(0, location.href.lastIndexOf('/'));
+        
+        this.callbacks = new Map();
+        this.msgCounter = 0;
+
+        this.worker.onmessage = (e) => {
+            const data = e.data;
+            if (data.type === 'ERROR') {
+                console.error("Excel Worker Error:", data.error);
+                if (data.msgId && this.callbacks.has(data.msgId)) {
+                    this.callbacks.get(data.msgId).reject(new Error(data.error));
+                    this.callbacks.delete(data.msgId);
+                }
+            } else if (data.type === 'INIT_SUCCESS') {
+                if (this.initResolve) this.initResolve();
+            } else if (data.type === 'READ_SUCCESS') {
+                if (this.readResolve) this.readResolve(data.sheetNames);
+            } else if (data.type === 'EXTRACT_SUCCESS') {
+                if (data.msgId && this.callbacks.has(data.msgId)) {
+                    const parsedPayload = JSON.parse(data.payloadStr);
+                    this.callbacks.get(data.msgId).resolve(parsedPayload);
+                    this.callbacks.delete(data.msgId);
+                }
+            }
+        };
     }
 
-    return { headers, data, detectedEncoding: finalDetected };
+    async init() {
+        return new Promise((resolve) => {
+            this.initResolve = resolve;
+            this.worker.postMessage({ type: 'INIT', basePath: this.basePath });
+        });
+    }
+
+    async readFile(buffer) {
+        return new Promise((resolve, reject) => {
+            this.readResolve = resolve;
+            this.worker.postMessage({ type: 'READ_FILE', buffer: buffer });
+        });
+    }
+
+    async extractSheet(sheetName, headerRowIndex = 0, autoFixFonts = true, encodingType = 'AUTO') {
+        return new Promise((resolve, reject) => {
+            const msgId = ++this.msgCounter;
+            this.callbacks.set(msgId, { resolve, reject });
+            this.worker.postMessage({
+                type: 'EXTRACT_SHEET',
+                msgId: msgId,
+                sheetName,
+                headerRowIndex,
+                autoFixFonts,
+                encodingType
+            });
+        });
+    }
+
+    terminate() {
+        this.worker.terminate();
+    }
 }
 
-// Đọc file -> Json Array (Sử dụng SheetJS - Tối ưu 200k+ dòng)
+// Hàm dự phòng báo lỗi nếu lỡ bị gọi cũ trong app-studio.js
+async function extractSheetData() {
+    throw new Error("extractSheetData has been deprecated in favor of Web Worker API.");
+}
+
+// Đọc file -> Json Array (Sử dụng SheetJS + Web Worker để không đơ UI)
 async function readExcelFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
                 const buffer = new Uint8Array(e.target.result);
-                // Đọc workbook bằng SheetJS, bỏ qua các style phức tạp để load siêu tốc
-                const workbook = XLSX.read(buffer, { type: 'array' });
                 
-                const sheetNames = workbook.SheetNames;
+                const workerApi = new ExcelWorkerAPI();
+                await workerApi.init();
                 
-                // Trích xuất sheet đầu tiên mặc định
+                const sheetNames = await workerApi.readFile(buffer);
                 const firstSheetName = sheetNames[0];
-                const firstSheet = workbook.Sheets[firstSheetName];
-                const firstSheetResult = await extractSheetData(firstSheet, 0);
+                const firstSheetResult = await workerApi.extractSheet(firstSheetName, 0);
 
                 resolve({
                     fileName: file.name,
-                    workbook: workbook,              // Cache lại SheetJS workbook
+                    workerApi: workerApi,            // Truyền worker instance để Extract Sheet qua lại được
                     sheetNames: sheetNames, 
                     sheetsData: {
                         [firstSheetName]: firstSheetResult
                     }           
                 });
             } catch (err) {
-                console.error("SheetJS Load Error:", err);
                 reject(err);
             }
         };

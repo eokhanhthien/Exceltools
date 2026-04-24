@@ -504,12 +504,11 @@ function renderConfigPanel() {
         `;
 
         const triggerReparse = async () => {
-            if (AppState.rootFileCache && AppState.rootFileCache.workbook) {
+            if (AppState.rootFileCache && AppState.rootFileCache.workerApi) {
                 const sheetName = AppState.rootSelectedSheet;
-                const worksheet = AppState.rootFileCache.workbook.Sheets[sheetName];
                 
                 // Mặc định luôn sửa lỗi (AppState.rootAutoFixFonts = true)
-                const result = await extractSheetData(worksheet, AppState.rootHeaderRowIndex, true, 'AUTO');
+                const result = await AppState.rootFileCache.workerApi.extractSheet(sheetName, AppState.rootHeaderRowIndex, true, 'AUTO');
                 
                 AppState.rootData = result.data;
                 AppState.rootHeaders = result.headers;
@@ -534,9 +533,8 @@ function renderConfigPanel() {
                 const sheetName = e.target.value;
                 AppState.rootSelectedSheet = sheetName;
                 
-                // Trích xuất data từ workbook cache với settings hiện tại
-                const worksheet = AppState.rootFileCache.workbook.Sheets[sheetName];
-                const result = await extractSheetData(worksheet, AppState.rootHeaderRowIndex, AppState.rootAutoFixFonts, AppState.rootEncodingType);
+                // Trích xuất data từ worker với settings hiện tại
+                const result = await AppState.rootFileCache.workerApi.extractSheet(sheetName, AppState.rootHeaderRowIndex, AppState.rootAutoFixFonts, AppState.rootEncodingType);
                 
                 AppState.rootData = result.data;
                 AppState.rootHeaders = result.headers;
