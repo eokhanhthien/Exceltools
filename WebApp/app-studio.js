@@ -14,6 +14,36 @@ const AppState = {
     cachedResults: new Map() // ID Bước -> Dữ liệu đầu ra của bước đó (Tối ưu RAM)
 };
 
+// --- AUTO-SAVE (LOCAL STORAGE) ---
+function saveStateToLocal() {
+    try {
+        const exportSteps = AppState.steps.map(s => {
+            let clone = JSON.parse(JSON.stringify(s));
+            // Xoá data nặng để tránh tràn 5MB limit của localStorage
+            if (clone.type === 'VLOOKUP' && clone.config.lookupData) clone.config.lookupData = null;
+            if (clone.type === 'COMPARE' && clone.config.compareData) clone.config.compareData = null;
+            return clone;
+        });
+        localStorage.setItem('DataX_AutoSave_Steps', JSON.stringify(exportSteps));
+    } catch (e) {
+        console.warn("Auto-save failed:", e);
+    }
+}
+
+function loadStateFromLocal() {
+    try {
+        const saved = localStorage.getItem('DataX_AutoSave_Steps');
+        if (saved) {
+            const steps = JSON.parse(saved);
+            if (Array.isArray(steps) && steps.length > 0) {
+                AppState.steps = steps;
+            }
+        }
+    } catch(e) {
+        console.warn("Khôi phục Auto-Save thất bại:", e);
+    }
+}
+
 // Khởi tạo một bước (Step) trống
 function createStep(type) {
     const id = type.toLowerCase() + '-' + Date.now();
@@ -39,7 +69,7 @@ function renderPipelineSteps() {
             <div class="step-dot"></div>
             <div class="step-card ${AppState.activeStepId === 'ROOT' ? 'active' : ''}">
                 <div class="step-title">0. Kho Data Gốc <span class="badge badge-blue">ROOT</span></div>
-                <div class="step-desc">${AppState.rootHeaders.length ? AppState.rootData.length.toLocaleString() + ' dòng dữ liệu' : 'Chưa tải file'}</div>
+                <div class="step-desc">${AppState.rootHeaders.length ? AppState.rootTotalRows.toLocaleString() + ' dòng dữ liệu' + (AppState.rootTotalRows > AppState.rootData.length ? ' (Đang xem trước)' : '') : 'Chưa tải file'}</div>
             </div>
         </div>
     `;
@@ -160,15 +190,18 @@ async function recalculatePipeline(silent = false) {
     
     setTimeout(async () => {
         let currentData = [...AppState.rootData];
-        AppState.cachedResults.set('ROOT', currentData);
+        // CHỈ LƯU 500 DÒNG ĐỂ PREVIEW LÊN UI - CỨU RAM CHO WEB TĨNH
+        AppState.cachedResults.set('ROOT', AppState.rootData.slice(0, 500));
 
         try {
             for (const step of AppState.steps) {
                 if (!step.disabled) {
                     currentData = applyStepToData(currentData, step);
                 }
-                AppState.cachedResults.set(step.id, currentData || []); // Cache kết quả sau mỗi bước
+                // Chỉ lưu bản xem trước 500 dòng. Mảng currentData khổng lồ cũ sẽ bị Garbage Collector dọn dẹp ngay lập tức!
+                AppState.cachedResults.set(step.id, currentData ? currentData.slice(0, 500) : []); 
             }
+            saveStateToLocal(); // Tự động lưu thiết lập pipeline
         } catch (err) {
             console.error("Lỗi Pipeline:", err);
         }
@@ -425,7 +458,13 @@ function renderPreviewAtActiveStep() {
     gridInstance.loadData(sheetData);
     
     // Cập nhật text thống kê
-    document.getElementById('preview-row-count').innerText = `${renderData.length.toLocaleString()} dòng (Full)`;
+    let displayCountText = `${renderData.length.toLocaleString()} dòng`;
+    if (renderData.length >= 500) {
+        displayCountText += ` (Bản Xem Trước - Tải xuống sẽ FULL data)`;
+    } else {
+        displayCountText += ` (Full)`;
+    }
+    document.getElementById('preview-row-count').innerText = displayCountText;
     document.getElementById('preview-col-count').innerText = `${headers.length} cột`;
 }
 
@@ -475,18 +514,7 @@ function renderConfigPanel() {
                 </div>
             `;
 
-            // Font repair is giờ đây hoàn toàn tự động và ẩn đi để tối ưu trải nghiệm "Không Cần Chạm"
-            rootFontFixHtml = `
-                <div id="encoding-status-box" style="margin-top: 15px; padding: 10px; background: #f0f7ff; border-radius: 8px; border: 1px solid #d0e7ff;">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:16px;">✨</span>
-                        <div>
-                            <div style="font-weight: 600; font-size:13px; color: var(--primary);">Tự động sửa lỗi Font (Smart)</div>
-                            <p id="encoding-info-text" style="font-size:11px; color:#666; margin:2px 0 0 0;">Đang quét định dạng ô...</p>
-                        </div>
-                    </div>
-                </div>
-            `;
+            rootFontFixHtml = ''; // Ẩn UI font fix - tự động xử lý ở backend
         }
 
         dynamicPane.innerHTML = `
@@ -507,8 +535,8 @@ function renderConfigPanel() {
             if (AppState.rootFileCache && AppState.rootFileCache.workerApi) {
                 const sheetName = AppState.rootSelectedSheet;
                 
-                // Mặc định luôn sửa lỗi (AppState.rootAutoFixFonts = true)
-                const result = await AppState.rootFileCache.workerApi.extractSheet(sheetName, AppState.rootHeaderRowIndex, true, 'AUTO');
+                // Sử dụng lựa chọn của người dùng
+                const result = await AppState.rootFileCache.workerApi.extractSheet(sheetName, AppState.rootHeaderRowIndex, true, AppState.rootEncodingType);
                 
                 AppState.rootData = result.data;
                 AppState.rootHeaders = result.headers;
@@ -552,6 +580,13 @@ function renderConfigPanel() {
             });
         }
 
+        if (document.getElementById('root-encoding-select')) {
+            document.getElementById('root-encoding-select').addEventListener('change', (e) => {
+                AppState.rootEncodingType = e.target.value;
+                triggerReparse();
+            });
+        }
+
 
         // Sự kiện Upload Root
         const dropzone = document.getElementById('root-dropzone');
@@ -563,6 +598,11 @@ function renderConfigPanel() {
                 document.getElementById('global-loading').classList.remove('hidden');
                 document.getElementById('global-loading-text').innerText = "Đang đọc cấu trúc file...";
                 try {
+                    // Cần huỷ worker cũ nếu đã từng tải file trước đó để tránh tràn RAM
+                    if (AppState.rootFileCache && AppState.rootFileCache.workerApi) {
+                        AppState.rootFileCache.workerApi.terminate();
+                    }
+
                     const result = await readExcelFile(e.target.files[0]);
                     AppState.rootFileCache = result;
                     AppState.rootSelectedSheet = result.sheetNames[0];
@@ -574,6 +614,7 @@ function renderConfigPanel() {
                     const sheetData = result.sheetsData[AppState.rootSelectedSheet];
                     AppState.rootData = sheetData.data;
                     AppState.rootHeaders = sheetData.headers;
+                    AppState.rootTotalRows = sheetData.totalRows || sheetData.data.length;
 
                     await recalculatePipeline();
                     renderConfigPanel(); 
@@ -1265,10 +1306,15 @@ function renderConfigPanel() {
                 document.getElementById('global-loading').classList.remove('hidden');
                 document.getElementById('global-loading-text').innerText = "Đang rải file Index cho VLOOKUP...";
                 try {
-                    const result = await readExcelFile(e.target.files[0]);
+                    // VLOOKUP cần nạp FULL data để không bị sót map
+                    const result = await readExcelFile(e.target.files[0], null);
                     // Tự động bốc sheet đầu tiên nếu tải file bên ngoài
                     const sName = result.sheetNames[0];
                     step.config.lookupData = result.sheetsData[sName].data; 
+                    
+                    // Giải phóng Worker ngay lập tức vì VLOOKUP/COMPARE file ngoài chỉ cần đọc 1 lần
+                    if (result.workerApi) result.workerApi.terminate();
+                    
                     document.getElementById('vlk-filename').innerText = "Thành công!";
                     renderConfigPanel(); // Reload panel để bung hộp thoại
                 } catch(e) {
@@ -1415,9 +1461,14 @@ function renderConfigPanel() {
                 document.getElementById('global-loading').classList.remove('hidden');
                 document.getElementById('global-loading-text').innerText = "Đang rải file Index cho chức năng So Sánh...";
                 try {
-                    const result = await readExcelFile(e.target.files[0]);
+                    // COMPARE cần nạp FULL data
+                    const result = await readExcelFile(e.target.files[0], null);
                     const sName = result.sheetNames[0];
                     step.config.compareData = result.sheetsData[sName].data; 
+                    
+                    // Giải phóng Worker ngay lập tức
+                    if (result.workerApi) result.workerApi.terminate();
+                    
                     document.getElementById('cmp-filename').innerText = "Thành công nạp file phụ!";
                     renderConfigPanel();
                 } catch(e) {
@@ -1432,31 +1483,53 @@ function renderConfigPanel() {
 
 // XUẤT OUTPUT (FINAL EXPORT)
 document.getElementById('btn-export-final').addEventListener('click', () => {
-    // Luôn luôn xuất ra mảng kết quả của bước CHÓT
-    let finalData = [];
-    if (AppState.steps.length > 0) {
-        finalData = AppState.cachedResults.get(AppState.steps[AppState.steps.length - 1].id) || [];
-    } else {
-        finalData = AppState.cachedResults.get('ROOT') || [];
-    }
-
-    if (finalData.length === 0) {
-        alert("Bảng dữ liệu đang trống, không có gì để xuất.");
+    if (AppState.rootData.length === 0) {
+        alert("Bảng dữ liệu gốc đang trống, không có gì để xuất.");
         return;
     }
 
     document.getElementById('global-loading').classList.remove('hidden');
-    document.getElementById('global-loading-text').innerText = "Đang trích xuất toàn bộ dữ liệu...";
+    document.getElementById('global-loading-text').innerText = "Đang chạy Engine xử lý Data lớn (Xin vui lòng đợi)...";
     
+    // setTimeout để UI kịp hiện Loading Spinner
     setTimeout(async () => {
         try {
-             await exportPipelineResult(finalData, `DataX_Output_${Date.now()}.xlsx`);
-        } catch(e) {
-            alert("Lỗi xuất file: " + e.message);
+            const workerApi = AppState.rootFileCache.workerApi;
+
+            // Lấy FULL data từ sheet hiện tại (không giới hạn preview)
+            const currentSheet = AppState.rootSelectedSheet || AppState.rootFileCache.sheetNames[0];
+            const fullData = AppState.rootFileCache.sheetsData[currentSheet]
+                ? AppState.rootFileCache.sheetsData[currentSheet].fullData
+                : AppState.rootData;
+
+            // 1. Gửi FULL data + pipeline xuống Worker để xử lý
+            document.getElementById('global-loading-text').innerText = "Đang tính toán toàn bộ pipeline trong Worker...";
+            const pipelineResult = await workerApi.runPipeline(AppState.steps, fullData);
+
+            // 2. Yêu cầu Worker tạo File Excel từ kết quả đã tính
+            document.getElementById('global-loading-text').innerText = "Đang tạo file Excel...";
+            const buffer = await workerApi.exportFinal();
+
+            if (!buffer || buffer.byteLength === 0) throw new Error("File tạo ra bị trống. Vui lòng thử lại.");
+
+            // 3. Tải file về máy
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const finalFileName = `Export_${AppState.rootFileCache.fileName.split('.')[0]}_${_dateStr()}.xlsx`;
+            a.download = finalFileName;
+            a.click();
+            window.URL.revokeObjectURL(url);
+
+            alert(`✅ Đã xử lý và xuất xong ${pipelineResult.totalRows.toLocaleString()} dòng dữ liệu!`);
+        } catch (err) {
+            console.error("Lỗi Xuất File:", err);
+            alert("Lỗi xuất file: " + err.message);
         } finally {
             document.getElementById('global-loading').classList.add('hidden');
         }
-    }, 100);
+    }, 50);
 });
 
 // === CONFIG PANEL: click-outside để đóng ===
@@ -1493,5 +1566,6 @@ document.getElementById('btn-export-final').addEventListener('click', () => {
     window._closeConfigPanel = closePanel;
 })();
 
-// INITIALIZE
+// INITIALIZE & AUTO-LOAD
+loadStateFromLocal();
 renderPipelineSteps();

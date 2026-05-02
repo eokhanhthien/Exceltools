@@ -5,20 +5,14 @@ function removeVietnameseTones(str) {
     return str.toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
 
-// Logic so sánh chung (Dùng cho Filter và Conditional Column)
 function checkSingleCondition(cellVal, op, targetVal) {
     const v1 = (cellVal === undefined || cellVal === null) ? "" : String(cellVal).trim();
     const v2 = (targetVal === undefined || targetVal === null) ? "" : String(targetVal).trim();
-
-    // Kiểm tra ô trống
     if (op === 'IS_EMPTY') return v1 === "";
     if (op === 'NOT_EMPTY') return v1 !== "";
-
-    // Thử so sánh số
     const num1 = parseFloat(v1.replace(/,/g, ''));
     const num2 = parseFloat(v2.replace(/,/g, ''));
     const isNum = !isNaN(num1) && !isNaN(num2);
-
     if (isNum) {
         if (op === 'EQUALS' || op === '=') return num1 === num2;
         if (op === 'NOT_EQUALS' || op === '!=') return num1 !== num2;
@@ -27,216 +21,19 @@ function checkSingleCondition(cellVal, op, targetVal) {
         if (op === 'GREATER_EQUAL' || op === '>=') return num1 >= num2;
         if (op === 'LESS_EQUAL' || op === '<=') return num1 <= num2;
     }
-
-    // So sánh chuỗi (In hoa để không phân biệt)
     const s1 = v1.toUpperCase();
     const s2 = v2.toUpperCase();
-
     if (op === 'EQUALS' || op === '=') return s1 === s2;
     if (op === 'NOT_EQUALS' || op === '!=') return s1 !== s2;
     if (op === 'CONTAINS') return s1.includes(s2);
-    if (op === 'GREATER_THAN' || op === '>') return s1 > s2;
-    if (op === 'LESS_THAN' || op === '<') return s1 < s2;
-
+    if (op === 'STARTS_WITH') return s1.startsWith(s2);
     return false;
 }
 
-// Mã nguồn của Web Worker (Được inject vào Blob)
-const WORKER_CODE = `
-    self.onmessage = function(e) {
-        if(e.data.type === 'INIT') {
-            try {
-                // Ensure correct relative paths
-                importScripts(e.data.basePath + '/xlsx.full.min.js');
-                importScripts(e.data.basePath + '/viet-encoder.js');
-                self.postMessage({ type: 'INIT_SUCCESS' });
-            } catch(err) {
-                self.postMessage({ type: 'ERROR', error: err.toString() });
-            }
-        } else if(e.data.type === 'READ_FILE') {
-            try {
-                const workbook = XLSX.read(e.data.buffer, { type: 'array' });
-                self.cachedWorkbook = workbook;
-                const sheetNames = workbook.SheetNames;
-                self.postMessage({ type: 'READ_SUCCESS', sheetNames: sheetNames });
-            } catch(err) {
-                self.postMessage({ type: 'ERROR', error: err.toString() });
-            }
-        } else if(e.data.type === 'EXTRACT_SHEET') {
-            try {
-                const { sheetName, headerRowIndex, autoFixFonts, encodingType, msgId } = e.data;
-                const worksheet = self.cachedWorkbook.Sheets[sheetName];
-                const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
-                
-                if (rawRows.length <= headerRowIndex) {
-                    self.postMessage({ type: 'EXTRACT_SUCCESS', msgId: msgId, payloadStr: JSON.stringify({ headers: [], data: [], detectedEncoding: 'NONE' }) });
-                    return;
-                }
-
-                const headers = rawRows[headerRowIndex].map((h, idx) => {
-                    let val = String(h || "").trim();
-                    return val || 'Column' + (idx + 1);
-                });
-
-                const data = [];
-                let sampleForDetect = [];
-
-                for (let i = headerRowIndex + 1; i < rawRows.length; i++) {
-                    const rawRow = rawRows[i];
-                    if (rawRow.every(cell => cell === "")) continue;
-
-                    const rowData = {};
-                    headers.forEach((header, index) => {
-                        const val = rawRow[index];
-                        rowData[header] = (val === null || val === undefined) ? "" : val;
-                    });
-                    
-                    data.push(rowData);
-                    
-                    if (autoFixFonts && sampleForDetect.length < 100) {
-                        sampleForDetect.push(rowData);
-                    }
-                }
-
-                let finalDetected = 'NONE';
-                if (autoFixFonts && data.length > 0 && typeof VietEncoder !== 'undefined') {
-                    finalDetected = (encodingType === 'AUTO') ? VietEncoder.detect(sampleForDetect) : encodingType;
-                    if (finalDetected !== 'NONE') {
-                        for (let i = 0; i < data.length; i++) {
-                            const row = data[i];
-                            for (let key in row) {
-                                if (typeof row[key] === 'string' && row[key].length > 0) {
-                                    row[key] = VietEncoder.fix(row[key], finalDetected);
-                                }
-                            }
-                        }
-                        for (let i = 0; i < headers.length; i++) {
-                            headers[i] = VietEncoder.fix(headers[i], finalDetected);
-                        }
-                    }
-                }
-
-                // Dùng JSON.stringify để serialize trước khi gởi, tránh lỗi tràn RAM Structured Cloning
-                self.postMessage({ 
-                    type: 'EXTRACT_SUCCESS', 
-                    msgId: msgId,
-                    payloadStr: JSON.stringify({ headers, data, detectedEncoding: finalDetected }) 
-                });
-            } catch(err) {
-                self.postMessage({ type: 'ERROR', msgId: e.data.msgId, error: err.toString() });
-            }
-        }
-    };
-`;
-
-// Lớp Wrapper cho Web Worker để tải Excel siêu tốc không làm đơ trình duyệt
-class ExcelWorkerAPI {
-    constructor() {
-        const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
-        this.worker = new Worker(URL.createObjectURL(blob));
-        this.basePath = location.href.substring(0, location.href.lastIndexOf('/'));
-        
-        this.callbacks = new Map();
-        this.msgCounter = 0;
-
-        this.worker.onmessage = (e) => {
-            const data = e.data;
-            if (data.type === 'ERROR') {
-                console.error("Excel Worker Error:", data.error);
-                if (data.msgId && this.callbacks.has(data.msgId)) {
-                    this.callbacks.get(data.msgId).reject(new Error(data.error));
-                    this.callbacks.delete(data.msgId);
-                }
-            } else if (data.type === 'INIT_SUCCESS') {
-                if (this.initResolve) this.initResolve();
-            } else if (data.type === 'READ_SUCCESS') {
-                if (this.readResolve) this.readResolve(data.sheetNames);
-            } else if (data.type === 'EXTRACT_SUCCESS') {
-                if (data.msgId && this.callbacks.has(data.msgId)) {
-                    const parsedPayload = JSON.parse(data.payloadStr);
-                    this.callbacks.get(data.msgId).resolve(parsedPayload);
-                    this.callbacks.delete(data.msgId);
-                }
-            }
-        };
-    }
-
-    async init() {
-        return new Promise((resolve) => {
-            this.initResolve = resolve;
-            this.worker.postMessage({ type: 'INIT', basePath: this.basePath });
-        });
-    }
-
-    async readFile(buffer) {
-        return new Promise((resolve, reject) => {
-            this.readResolve = resolve;
-            this.worker.postMessage({ type: 'READ_FILE', buffer: buffer });
-        });
-    }
-
-    async extractSheet(sheetName, headerRowIndex = 0, autoFixFonts = true, encodingType = 'AUTO') {
-        return new Promise((resolve, reject) => {
-            const msgId = ++this.msgCounter;
-            this.callbacks.set(msgId, { resolve, reject });
-            this.worker.postMessage({
-                type: 'EXTRACT_SHEET',
-                msgId: msgId,
-                sheetName,
-                headerRowIndex,
-                autoFixFonts,
-                encodingType
-            });
-        });
-    }
-
-    terminate() {
-        this.worker.terminate();
-    }
-}
-
-// Hàm dự phòng báo lỗi nếu lỡ bị gọi cũ trong app-studio.js
-async function extractSheetData() {
-    throw new Error("extractSheetData has been deprecated in favor of Web Worker API.");
-}
-
-// Đọc file -> Json Array (Sử dụng SheetJS + Web Worker để không đơ UI)
-async function readExcelFile(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const buffer = new Uint8Array(e.target.result);
-                
-                const workerApi = new ExcelWorkerAPI();
-                await workerApi.init();
-                
-                const sheetNames = await workerApi.readFile(buffer);
-                const firstSheetName = sheetNames[0];
-                const firstSheetResult = await workerApi.extractSheet(firstSheetName, 0);
-
-                resolve({
-                    fileName: file.name,
-                    workerApi: workerApi,            // Truyền worker instance để Extract Sheet qua lại được
-                    sheetNames: sheetNames, 
-                    sheetsData: {
-                        [firstSheetName]: firstSheetResult
-                    }           
-                });
-            } catch (err) {
-                reject(err);
-            }
-        };
-        reader.onerror = (err) => reject(err);
-        reader.readAsArrayBuffer(file);
-    });
-}
-
-// Xử lý từng khối Data (Pure Function)
 function applyStepToData(sourceData, step) {
-    let result = [...sourceData];
+    // GUARD: Luôn đảm bảo sourceData là mảng
+    let result = Array.isArray(sourceData) ? [...sourceData] : [];
     const config = step.config;
-
     try {
         if (step.type === 'FILTER') {
             if (config.conditions && config.conditions.length > 0) {
@@ -246,7 +43,6 @@ function applyStepToData(sourceData, step) {
                     for (const cond of config.conditions) {
                         const cellVal = String(row[cond.col] || "").trim().toUpperCase();
                         const filterVal = String(cond.val || "").trim().toUpperCase();
-                        
                         let condMatch = false;
                         if (cond.op === 'CONTAINS') condMatch = cellVal.includes(filterVal);
                         else if (cond.op === 'EQUALS') condMatch = (cellVal === filterVal);
@@ -256,323 +52,327 @@ function applyStepToData(sourceData, step) {
                             const list = filterVal.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
                             condMatch = list.includes(cellVal);
                         }
-                        
                         matches.push(condMatch);
                     }
-
-                    if (logicType === 'OR') return matches.some(m => m === true);
-                    return matches.every(m => m === true);
+                    return logicType === 'OR' ? matches.some(m => m === true) : matches.every(m => m === true);
                 });
             }
-        } 
-        
-        else if (step.type === 'MATH_COMPUTE') {
-            const newCol = (config.newColName && config.newColName.trim() !== '') ? config.newColName : 'Kết Quả Tính';
+        } else if (step.type === 'MATH_COMPUTE') {
+            const newCol = (config.newColName && config.newColName.trim() !== '') ? config.newColName : 'Kết Quả';
             const expr = config.expression || "";
-
             result = result.map(row => {
                 const newRow = { ...row };
-                if (!expr) {
-                    newRow[newCol] = 0;
-                    return newRow;
-                }
-
-                // Thay thế [Tên Cột] bằng giá trị số thực tế
+                if (!expr) { newRow[newCol] = 0; return newRow; }
                 const safeExpr = expr.replace(/\[([^\]]+)\]/g, (match, colName) => {
                     const val = parseFloat(row[colName]);
                     return isNaN(val) ? 0 : val;
                 });
-
                 try {
-                    // Dùng Function để tính toán chuỗi an toàn trong nội bộ
                     const res = new Function(`return ${safeExpr}`)();
                     newRow[newCol] = typeof res === 'number' ? res : 0;
-                } catch (e) {
-                    newRow[newCol] = 0;
-                }
+                } catch (e) { newRow[newCol] = 0; }
                 return newRow;
             });
-        }
-
-        else if (step.type === 'CONDITIONAL_COLUMN') {
-            const targetCol = (config.newColName && config.newColName.trim() !== "") ? config.newColName : `Cột Mới (IF)`;
-            
-            result = result.map(row => {
-                const newRow = { ...row };
-                let finalVal = config.elseVal;
-                if (config.elseType === 'COLUMN') finalVal = row[config.elseVal] || "";
-
-                // Duyệt từng bộ Luật (Rules)
-                for (const rule of (config.rules || [])) {
-                    let rulePassed = true; 
-                    if (!rule.conditions || rule.conditions.length === 0) continue;
-
-                    rule.conditions.forEach((cond, idx) => {
-                        const cellVal = row[cond.col];
-                        let compVal = cond.val;
-                        if (cond.type === 'COLUMN') compVal = row[cond.val];
-
-                        const isMatch = checkSingleCondition(cellVal, cond.op, compVal);
-
-                        if (idx === 0) {
-                            rulePassed = isMatch;
-                        } else {
-                            if (cond.logic === 'AND') rulePassed = rulePassed && isMatch;
-                            else if (cond.logic === 'OR') rulePassed = rulePassed || isMatch;
-                        }
-                    });
-
-                    if (rulePassed) {
-                        finalVal = rule.thenType === 'COLUMN' ? row[rule.thenVal] : rule.thenVal;
-                        break; // Dừng lại ở luật đầu tiên khớp
-                    }
-                }
-                newRow[targetCol] = finalVal;
-                return newRow;
-            });
-        }
-
-        else if (step.type === 'VLOOKUP') {
+        } else if (step.type === 'VLOOKUP') {
             if (config.lookupData && config.baseKey && config.lookupKey) {
                 const lookupMap = new Map();
-                for (const lRow of config.lookupData) {
+                config.lookupData.forEach(lRow => {
                     const k = String(lRow[config.lookupKey] || "").trim().toUpperCase();
-                    if (!lookupMap.has(k)) {
-                        lookupMap.set(k, lRow);
-                    }
-                }
-
+                    if (!lookupMap.has(k)) lookupMap.set(k, lRow);
+                });
                 result = result.map(row => {
                     const newRow = { ...row };
                     const k = String(row[config.baseKey] || "").trim().toUpperCase();
                     const match = lookupMap.get(k);
-                    
-                    if (config.enableFlag) {
-                        const fCol = config.flagColName || 'Trang_Thai_Khop';
-                        newRow[fCol] = match ? "Có" : "Không";
-                    }
-
-                    for (const grabCol of (config.grabColumns || [])) {
+                    if (config.enableFlag) newRow[config.flagColName || 'Khớp?'] = match ? "Có" : "Không";
+                    (config.grabColumns || []).forEach(grabCol => {
                         let targetName = config.prefix ? `${config.prefix}_${grabCol}` : grabCol;
-                        let suffix = 2;
-                        let originalName = targetName;
-                        while (row[targetName] !== undefined) {
-                            targetName = `${originalName}_File${suffix}`;
-                            if (row[targetName] === undefined) break;
-                            suffix++;
-                        }
-
-                        if (match) {
-                            newRow[targetName] = match[grabCol];
-                        } else {
-                            newRow[targetName] = config.joinType === 'INNER' ? null : "";
-                        }
-                    }
+                        newRow[targetName] = match ? match[grabCol] : "";
+                    });
                     return newRow;
                 });
-
-                if (config.joinType === 'INNER') {
-                    result = result.filter(row => {
-                        const k = String(row[config.baseKey] || "").trim().toUpperCase();
-                        return lookupMap.has(k);
-                    });
-                } else if (config.joinType === 'ANTI') {
-                    result = result.filter(row => {
-                        const k = String(row[config.baseKey] || "").trim().toUpperCase();
-                        return !lookupMap.has(k);
-                    });
-                }
+                if (config.joinType === 'INNER') result = result.filter(row => lookupMap.has(String(row[config.baseKey] || "").trim().toUpperCase()));
             }
-        }
-
-        else if (step.type === 'GROUP_BY') {
+        } else if (step.type === 'GROUP_BY') {
             if (config.groupCol) {
                 const groupMap = new Map();
-                for (const row of result) {
+                result.forEach(row => {
                     const k = String(row[config.groupCol] || "").trim();
-                    if (k === "") continue;
+                    if (k === "") return;
                     if (!groupMap.has(k)) {
-                        const initObj = {};
-                        initObj[config.groupCol] = row[config.groupCol];
-                        for (const agg of (config.aggregates || [])) {
+                        const initObj = { [config.groupCol]: row[config.groupCol] };
+                        (config.aggregates || []).forEach(agg => {
                             const internalKey = `__${agg.type}__${agg.col}`;
                             if (agg.type === 'SUM' || agg.type === 'COUNT') initObj[internalKey] = 0;
                             if (agg.type === 'JOIN_STRING') initObj[internalKey] = new Set();
-                        }
+                        });
                         groupMap.set(k, initObj);
                     }
-
                     const mapItem = groupMap.get(k);
-                    for (const agg of (config.aggregates || [])) {
+                    (config.aggregates || []).forEach(agg => {
                         const val = row[agg.col];
                         const internalKey = `__${agg.type}__${agg.col}`;
                         if (agg.type === 'SUM') {
-                            let num = parseFloat(val);
+                            let num = parseFloat(String(val).replace(/,/g, ''));
                             if (!isNaN(num)) mapItem[internalKey] += num;
                         } else if (agg.type === 'COUNT') {
                             if (val !== undefined && val !== "") mapItem[internalKey] += 1;
                         } else if (agg.type === 'JOIN_STRING') {
                             if (val && String(val).trim() !== "") mapItem[internalKey].add(String(val).trim());
                         }
-                    }
-                }
-
+                    });
+                });
                 result = Array.from(groupMap.values()).map(row => {
-                    const finalRow = {};
-                    finalRow[config.groupCol] = row[config.groupCol];
-                    for (const agg of (config.aggregates || [])) {
+                    const finalRow = { [config.groupCol]: row[config.groupCol] };
+                    (config.aggregates || []).forEach(agg => {
                         const internalKey = `__${agg.type}__${agg.col}`;
-                        let outName = agg.col;
-                        if (agg.type === 'SUM') outName = `Tổng_${agg.col}`;
-                        else if (agg.type === 'COUNT') outName = `Đếm_${agg.col}`;
-                        else if (agg.type === 'JOIN_STRING') outName = agg.col;
-
-                        if (agg.type === 'JOIN_STRING') {
-                            finalRow[outName] = Array.from(row[internalKey]).join(" | ");
-                        } else {
-                            finalRow[outName] = row[internalKey];
-                        }
-                    }
+                        let outName = agg.newName || (agg.type === 'SUM' ? `Tổng_${agg.col}` : agg.type === 'COUNT' ? `Đếm_${agg.col}` : agg.col);
+                        finalRow[outName] = (agg.type === 'JOIN_STRING') ? Array.from(row[internalKey]).join(" | ") : row[internalKey];
+                    });
                     return finalRow;
                 });
             }
         }
-
-        else if (step.type === 'SELECT_COLUMNS') {
-            if (config.columns && config.columns.length > 0) {
-                result = result.map(row => {
-                    const newRow = {};
-                    for (const colMap of config.columns) {
-                        newRow[colMap.newName || colMap.oldName] = row[colMap.oldName];
-                    }
-                    return newRow;
-                });
-            }
-        }
-
-        else if (step.type === 'COMPARE') {
-            if (config.compareData && config.baseKey && config.compareKey && config.baseCompareCol && config.secondaryCompareCol) {
-                const compareMap = new Map();
-                for (const lRow of config.compareData) {
-                    const k = String(lRow[config.compareKey] || "").trim().toUpperCase();
-                    if (!compareMap.has(k)) {
-                        compareMap.set(k, lRow);
-                    }
-                }
-
-                let comparedResult = [];
-
-                for (const row of result) {
-                    const k = String(row[config.baseKey] || "").trim().toUpperCase();
-                    const secRow = compareMap.get(k);
-
-                    if (secRow) {
-                        // Trích xuất số tiền để tính biến động
-                        let v1 = parseFloat(String(row[config.baseCompareCol]).replace(/,/g, ''));
-                        let v2 = parseFloat(String(secRow[config.secondaryCompareCol]).replace(/,/g, ''));
-                        v1 = isNaN(v1) ? 0 : v1;
-                        v2 = isNaN(v2) ? 0 : v2;
-
-                        const diff = v2 - v1; // Chênh lệch (Sau - Trước)
-                        const absDiff = Math.abs(diff);
-
-                        const newRow = {};
-                        newRow[config.baseKey] = row[config.baseKey]; // CIF
-                        newRow[`${config.baseCompareCol} (Trước)`] = v1;
-                        newRow[`${config.baseCompareCol} (Sau)`] = v2;
-                        newRow[`Biến động (+/-)`] = diff;
-
-                        // Chuyển lại giá trị absDiff ngầm để phục vụ filter/sort
-                        newRow.__absDiff = absDiff;
-
-                        // Các cột còn lại (gộp Text - lấy từ Base)
-                        for (const key in row) {
-                            if (key !== config.baseKey && key !== config.baseCompareCol) {
-                                newRow[key] = row[key];
-                            }
-                        }
-
-                        comparedResult.push(newRow);
-                    }
-                }
-
-                // Áp dụng điều kiện lọc biến động
-                if (config.conditionType === 'THRESHOLD_INC') {
-                    const threshold = parseFloat(config.diffThreshold) || 0;
-                    comparedResult = comparedResult.filter(r => r['Biến động (+/-)'] >= Math.abs(threshold));
-                } else if (config.conditionType === 'THRESHOLD_DEC') {
-                    const threshold = parseFloat(config.diffThreshold) || 0;
-                    comparedResult = comparedResult.filter(r => r['Biến động (+/-)'] <= -Math.abs(threshold));
-                } else if (config.conditionType === 'TOP_X_INC') {
-                    const limit = parseInt(config.topXValue) || 10;
-                    comparedResult.sort((a, b) => b['Biến động (+/-)'] - a['Biến động (+/-)']);
-                    comparedResult = comparedResult.slice(0, limit);
-                } else if (config.conditionType === 'TOP_X_DEC') {
-                    const limit = parseInt(config.topXValue) || 10;
-                    comparedResult.sort((a, b) => a['Biến động (+/-)'] - b['Biến động (+/-)']);
-                    comparedResult = comparedResult.slice(0, limit);
-                } else if (config.conditionType === 'THRESHOLD') {
-                    // Backwards compatibility with old absolute Threshold
-                    const threshold = parseFloat(config.diffThreshold) || 0;
-                    comparedResult = comparedResult.filter(r => r.__absDiff >= threshold);
-                } else if (config.conditionType === 'TOP_X') {
-                    // Backwards backward compatibility with old absolute Top X
-                    const limit = parseInt(config.topXValue) || 10;
-                    comparedResult.sort((a, b) => b.__absDiff - a.__absDiff);
-                    comparedResult = comparedResult.slice(0, limit);
-                }
-
-                // Xoá cột tạm __absDiff
-                comparedResult.forEach(r => delete r.__absDiff);
-
-                result = comparedResult;
-            }
-        }
-    } catch (e) {
-        console.error("Pipeline Engine Error:", e);
-    }
+    } catch (e) { console.error("Engine Error:", e); }
     return result;
 }
 
-// Chạy lại toán bộ ống từ đầu
-async function runFullPipeline(rootData, steps) {
-    let currentData = [...rootData];
-    for (const step of steps) {
-        if (!step.disabled) {
-            currentData = applyStepToData(currentData, step);
+// Hàm làm sạch một giá trị ô Excel (xử lý richText, formula, hyperlink object)
+function _sanitizeCellVal(val) {
+    if (val === null || val === undefined) return '';
+    if (val instanceof Date) return val;
+    if (typeof val !== 'object') return val;
+    // ExcelJS formula cell: { formula, result }
+    if (val.result !== undefined) return _sanitizeCellVal(val.result);
+    // ExcelJS rich text: { richText: [{text:'...'},...] }
+    if (Array.isArray(val.richText)) return val.richText.map(r => r.text || '').join('');
+    // ExcelJS hyperlink: { text, hyperlink }
+    if (val.text !== undefined) return val.text;
+    return String(val);
+}
+
+const WORKER_CODE = `
+    const checkSingleCondition = ${checkSingleCondition.toString()};
+    const applyStepToData = ${applyStepToData.toString()};
+
+    self.onmessage = async function(e) {
+        // *** KHAI BÁO msgId NGAY TỪ ĐẦU *** để tránh lỗi ReferenceError khi dùng trong catch
+        const msgId = (e.data && e.data.msgId) ? e.data.msgId : null;
+
+        try {
+            if (e.data.type === 'INIT') {
+                // CHỈ NẠP XLSX (SheetJS) - ổn định trong blob Worker
+                importScripts(e.data.basePath + '/xlsx.full.min.js');
+                self.postMessage({ type: 'INIT_SUCCESS' });
+
+            } else if (e.data.type === 'APPLY_PIPELINE') {
+                const { steps, fullData } = e.data;
+                let res = Array.isArray(fullData) ? [...fullData] : [];
+                for (const s of steps) { if (!s.disabled) res = applyStepToData(res, s); }
+                self.processedData = res;
+                self.postMessage({ type: 'PIPELINE_SUCCESS', msgId, totalRows: res.length, previewData: res.slice(0, 1000) });
+
+            } else if (e.data.type === 'EXPORT_FINAL') {
+                // DÙNG XLSX (SheetJS) để tạo file - KHÔNG dùng ExcelJS vì không load được ổn định trong blob Worker
+                if (!self.processedData || self.processedData.length === 0) throw new Error('Không có dữ liệu để xuất.');
+                const headers = Object.keys(self.processedData[0]);
+                const rows = [headers];
+                for (let i = 0; i < self.processedData.length; i++) {
+                    rows.push(headers.map(h => {
+                        const v = self.processedData[i][h];
+                        return (v === null || v === undefined) ? '' : v;
+                    }));
+                }
+                const ws = XLSX.utils.aoa_to_sheet(rows);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Data');
+                // XLSX.write type:'array' trả về plain Array, phải bọc trong Uint8Array mới có .buffer
+                const arr = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+                const buffer = new Uint8Array(arr).buffer;
+                self.postMessage({ type: 'EXPORT_SUCCESS', msgId, buffer }, [buffer]);
+            }
+        } catch(err) {
+            self.postMessage({ type: 'ERROR', msgId, error: err.toString() });
+        }
+    };
+`;
+
+class ExcelWorkerAPI {
+    constructor() {
+        this.callbacks = new Map();
+        this.msgCounter = 0;
+        this.basePath = location.href.substring(0, location.href.lastIndexOf('/'));
+        try {
+            const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
+            this.worker = new Worker(URL.createObjectURL(blob));
+            this.worker.onmessage = (e) => this.handleMessage(e.data);
+            this.worker.onerror = (e) => console.error('Worker error:', e);
+        } catch (e) {
+            console.error("Worker init failed:", e);
         }
     }
-    return currentData;
-}
 
-// Hàm export kết quả (Sử dụng ExcelJS)
-async function exportPipelineResult(dataArray, fileName) {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Data');
-    
-    if (dataArray.length > 0) {
-        // Thiết lập header và dữ liệu
-        const headers = Object.keys(dataArray[0]);
-        worksheet.columns = headers.map(h => ({ header: h, key: h }));
-        worksheet.addRows(dataArray);
-        
-        // Style cho header (Đậm, màu nền nhẹ)
-        const headerRow = worksheet.getRow(1);
-        headerRow.font = { bold: true };
-        headerRow.fill = {
-            type: 'pattern',
-            pattern: 'solid',
-            fgColor: { argb: 'FFF0F0F0' }
-        };
+    handleMessage(data) {
+        if (data.type === 'ERROR') {
+            alert("Lỗi: " + data.error);
+            if (data.msgId && this.callbacks.has(data.msgId)) {
+                this.callbacks.get(data.msgId).reject(new Error(data.error));
+                this.callbacks.delete(data.msgId);
+            }
+        } else if (data.type === 'INIT_SUCCESS') {
+            if (this.initResolve) this.initResolve();
+        } else if (data.type === 'PIPELINE_SUCCESS') {
+            const cb = this.callbacks.get(data.msgId);
+            if (cb) { cb.resolve({ previewData: data.previewData, totalRows: data.totalRows }); this.callbacks.delete(data.msgId); }
+        } else if (data.type === 'EXPORT_SUCCESS') {
+            const cb = this.callbacks.get(data.msgId);
+            if (cb) { cb.resolve(data.buffer); this.callbacks.delete(data.msgId); }
+        }
     }
-    
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    window.URL.revokeObjectURL(url);
+
+    async init() {
+        return new Promise((res) => {
+            this.initResolve = res;
+            this.worker.postMessage({ type: 'INIT', basePath: this.basePath });
+        });
+    }
+
+    async runPipeline(steps, fullData) {
+        return new Promise((res, rej) => {
+            const msgId = 'm' + (++this.msgCounter);
+            this.callbacks.set(msgId, { resolve: res, reject: rej });
+            // Làm sạch data trước khi gửi để tránh DataCloneError từ ExcelJS objects
+            try {
+                const safeData = (fullData || []).map(row => {
+                    const nr = {};
+                    for (const k in row) {
+                        let v = row[k];
+                        if (v && typeof v === 'object' && !(v instanceof Date)) {
+                            if (v.result !== undefined) v = v.result;
+                            else if (Array.isArray(v.richText)) v = v.richText.map(r => r.text || '').join('');
+                            else if (v.text !== undefined) v = v.text;
+                            else v = String(v);
+                        }
+                        nr[k] = v;
+                    }
+                    return nr;
+                });
+                const safeSteps = JSON.parse(JSON.stringify(steps));
+                this.worker.postMessage({ type: 'APPLY_PIPELINE', msgId, steps: safeSteps, fullData: safeData });
+            } catch (e) {
+                rej(new Error("Lỗi chuẩn hóa dữ liệu: " + e.message));
+            }
+        });
+    }
+
+    async exportFinal() {
+        return new Promise((res, rej) => {
+            const msgId = 'm' + (++this.msgCounter);
+            this.callbacks.set(msgId, { resolve: res, reject: rej });
+            this.worker.postMessage({ type: 'EXPORT_FINAL', msgId });
+        });
+    }
+
+    terminate() { if (this.worker) this.worker.terminate(); }
 }
 
+async function readExcelFile(file, limit = 2000) {
+    const buffer = await file.arrayBuffer();
+    let data = [];
+    let headers = [];
+    let sheetNames = [];
+    let mainSheetName = "";
+
+    try {
+        // Dùng ExcelJS để đọc - tốt hơn cho font và cấu trúc file
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+        const worksheet = workbook.worksheets[0];
+        if (worksheet) {
+            mainSheetName = worksheet.name;
+            sheetNames = workbook.worksheets.map(w => w.name);
+            worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+                if (rowNumber === 1) {
+                    headers = row.values.slice(1).map((h, i) => {
+                        // Làm sạch tiêu đề cột (tránh hiển thị [object Object])
+                        return String(_sanitizeCellVal(h) || '').trim() || 'Col' + (i + 1);
+                    });
+                } else {
+                    const rowObj = {};
+                    row.values.slice(1).forEach((val, i) => {
+                        rowObj[headers[i]] = _sanitizeCellVal(val);
+                    });
+                    if (Object.values(rowObj).some(v => v !== '')) data.push(rowObj);
+                }
+            });
+        }
+    } catch (e) { console.warn("ExcelJS failed, falling back to XLSX:", e); }
+
+    // Fallback sang XLSX (SheetJS) nếu ExcelJS thất bại
+    if (data.length === 0) {
+        const wb = XLSX.read(buffer, { type: 'array' });
+        sheetNames = wb.SheetNames;
+        mainSheetName = sheetNames[0];
+        const ws = wb.Sheets[mainSheetName];
+        const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (raw.length > 0) {
+            headers = raw[0].map((h, i) => String(h || '').trim() || 'Col' + (i + 1));
+            for (let i = 1; i < raw.length; i++) {
+                const rowObj = {};
+                headers.forEach((h, idx) => { rowObj[h] = (raw[i][idx] === null || raw[i][idx] === undefined) ? '' : raw[i][idx]; });
+                if (Object.values(rowObj).some(v => v !== '')) data.push(rowObj);
+            }
+        }
+    }
+
+    // Sửa font tiếng Việt
+    let finalData = data;
+    let detected = 'NONE';
+    if (typeof VietEncoder !== 'undefined') {
+        // BƯỚC 1: Detect từ DATA (ưu tiên cao nhất, ít false positive)
+        detected = VietEncoder.detect(data.slice(0, 500));
+
+        // BƯỚC 2: Nếu data không detect được, kiểm tra CRM_BUG từ headers
+        // CHỈ check CRM_BUG (regex đặc thù) - KHÔNG dùng headerFakeRow cho TCVN3/VNI
+        // vì TCVN3/VNI regex có thể match nhầm với Unicode tiếng Việt chuẩn (gây "Số"→"Sộ")
+        if (detected === 'NONE') {
+            const headerStr = headers.join(' ');
+            const dataStr = JSON.stringify(data.slice(0, 100));
+            const combined = headerStr + ' ' + dataStr;
+            if (/NguyỦn|Thỹ|VĒn|TĒng|HỜng|Nguyỡt|TrĒm|NGìY|LỢc|TưỸng|QuỘc|HỒ TàN|SỘ|sỘ|Ęiỡn|ĘỢng|Đỹa|chỰ|Ę/.test(combined)) {
+                detected = 'CRM_BUG';
+            }
+        }
+
+        if (detected !== 'NONE') {
+            // Sửa cả KEY (tên cột) lẫn VALUE
+            finalData = data.map(row => {
+                const newRow = {};
+                for (const k in row) {
+                    const fixedKey = VietEncoder.fix(k, detected);
+                    newRow[fixedKey] = (typeof row[k] === 'string') ? VietEncoder.fix(row[k], detected) : row[k];
+                }
+                return newRow;
+            });
+            headers = headers.map(h => VietEncoder.fix(h, detected));
+        }
+    }
+
+    const workerApi = new ExcelWorkerAPI();
+    await workerApi.init();
+
+    return {
+        fileName: file.name,
+        workerApi: workerApi,
+        sheetNames: sheetNames,
+        sheetsData: {
+            [mainSheetName]: {
+                headers,
+                data: limit ? finalData.slice(0, limit) : finalData,
+                fullData: finalData,
+                totalRows: finalData.length,
+                detectedEncoding: detected
+            }
+        }
+    };
+}
