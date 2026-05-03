@@ -132,6 +132,226 @@ function applyStepToData(sourceData, step) {
                     return finalRow;
                 });
             }
+        } else if (step.type === 'FORMULA_BUILDER') {
+            const newCol = (config.newColName && config.newColName.trim()) ? config.newColName : 'Kết Quả';
+            const formula = String(config.formula || '').trim();
+            if (formula) {
+                // Helper: parse date từ nhiều định dạng khác nhau
+                // Helper: Parse chuỗi theo định dạng cụ thể (VD: dd/mm/yyyy)
+                const _parseFmt = (s, fmt) => {
+                    if (s === null || s === undefined || s === '') return null;
+                    if (s instanceof Date) return isNaN(s.getTime()) ? null : s;
+                    const cleanS = String(s).trim();
+                    const n = parseFloat(cleanS.replace(/,/g, ''));
+                    if (!isNaN(n) && n > 10000 && n < 80000 && !cleanS.includes('/') && !cleanS.includes('-')) {
+                        return new Date(Math.round((n - 25569) * 86400 * 1000));
+                    }
+                    const sParts = cleanS.split(/[\/\-\.\s]+/).filter(x => x !== '');
+                    const fParts = (fmt || '').toLowerCase().split(/[\/\-\.\s]+/).filter(x => x !== '');
+                    if (sParts.length < 3 || fParts.length < 3) return null;
+                    let _d1, _m1, _y1;
+                    fParts.forEach((part, i) => {
+                        if (part.includes('d')) _d1 = parseInt(sParts[i]);
+                        if (part.includes('m')) _m1 = parseInt(sParts[i]);
+                        if (part.includes('y')) _y1 = parseInt(sParts[i]);
+                    });
+                    if (_y1 < 100) _y1 += (_y1 > 50 ? 1900 : 2000);
+                    const dt = new Date(_y1, _m1 - 1, _d1);
+                    return (isNaN(dt.getTime()) || dt.getDate() !== _d1) ? null : dt;
+                };
+
+                const _pd = v => {
+                    if (!v && v !== 0) return null;
+                    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+                    const s = String(v).trim();
+                    if (s === '' || s.toLowerCase() === 'invalid date') return null;
+                    if (s.includes('/') || s.includes('-') || s.includes('.')) {
+                        const p = s.split(/[\/\-\.\s]+/).filter(x => x !== '');
+                        if (p.length >= 3) {
+                            let _d1, _m1, _y1;
+                            if (p[0].length <= 2 && p[2].length >= 2) {
+                                _d1 = parseInt(p[0]); _m1 = parseInt(p[1]); _y1 = parseInt(p[2]);
+                                if (_y1 < 100) _y1 += (_y1 > 50 ? 1900 : 2000);
+                                const dt = new Date(_y1, _m1 - 1, _d1);
+                                if (!isNaN(dt.getTime()) && dt.getDate() === _d1) return dt;
+                            }
+                            if (p[0].length >= 4) {
+                                _y1 = parseInt(p[0]); _m1 = parseInt(p[1]); _d1 = parseInt(p[2]);
+                                const dt = new Date(_y1, _m1 - 1, _d1);
+                                if (!isNaN(dt.getTime()) && dt.getDate() === _d1) return dt;
+                            }
+                        }
+                    }
+                    const n = parseFloat(s.replace(/,/g, ''));
+                    if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/') && !s.includes('-')) {
+                        return new Date(Math.round((n - 25569) * 86400 * 1000));
+                    }
+                    const p = new Date(s); return isNaN(p.getTime()) ? null : p;
+                };
+                const _pad = n => String(n).padStart(2,'0');
+                const _df = (v, fmt) => {
+                    const d = _pd(v); if (!d) return '';
+                    const _f = (fmt || 'dd/MM/yyyy').toLowerCase();
+                    const _y = d.getFullYear(), _m = d.getMonth() + 1, _dy = d.getDate();
+                    const _h = d.getHours(), _mi = d.getMinutes(), _s = d.getSeconds();
+                    const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                    const MO = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+                    return _f.replace(/yyyy|yy|mmmm|mmm|mm|m|dd|d|hh|h|nn|n|ss|s/gi, tok => {
+                        const t = tok.toLowerCase();
+                        if (t==='yyyy') return _y; if (t==='yy') return String(_y).slice(-2);
+                        if (t==='mmmm') return MO[d.getMonth()]; if (t==='mmm') return mo[d.getMonth()];
+                        if (t==='mm') return _pad(_m); if (t==='m') return _m;
+                        if (t==='dd') return _pad(_dy); if (t==='d') return _dy;
+                        if (t==='hh') return _pad(_h); if (t==='nn') return _pad(_mi);
+                        if (t==='ss') return _pad(_s);
+                        return tok;
+                    });
+                };
+                // Bỏ dấu tiếng Việt
+                const _noAccent = s => String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[đĐ]/g,c=>c==='đ'?'d':'D');
+
+                const _XL = {
+                    // === ĐIỀU KIỆN ===
+                    IF: (c,t,f)=>c?t:f,
+                    IFS: (...a)=>{ for(let i=0;i<a.length-1;i+=2){if(a[i])return a[i+1];} return a[a.length-1]; },
+                    IFERROR: (v,e)=>(v===null||v===undefined||String(v).startsWith('#'))?e:v,
+                    IFBLANK: (v,e)=>(v===null||v===undefined||v==='')?e:v,
+                    SWITCH: (val,...a)=>{ for(let i=0;i<a.length-1;i+=2){if(val==a[i])return a[i+1];} return a[a.length-1]; },
+                    // === CHUỖI ===
+                    LEFT: (s,n)=>String(s??'').substring(0,n??1),
+                    RIGHT: (s,n)=>{ const str=String(s??''); n=n??1; return str.substring(str.length-n); },
+                    MID: (s,st,n)=>String(s??'').substring((st??1)-1,(st??1)-1+(n??1)),
+                    LEN: (s)=>String(s??'').length,
+                    TRIM: (s)=>String(s??'').trim(),
+                    LTRIM: (s)=>String(s??'').trimStart(),
+                    RTRIM: (s)=>String(s??'').trimEnd(),
+                    UPPER: (s)=>String(s??'').toUpperCase(),
+                    LOWER: (s)=>String(s??'').toLowerCase(),
+                    PROPER: (s)=>String(s??'').replace(/\b\w/g,c=>c.toUpperCase()).replace(/\B\w/g,c=>c.toLowerCase()),
+                    CONCATENATE: (...a)=>a.map(x=>x??'').join(''),
+                    CONCAT: (...a)=>a.map(x=>x??'').join(''),
+                    TEXTJOIN: (sep,ig,...a)=>a.flat().filter(x=>!ig||(x!==null&&x!==undefined&&x!=='')).join(sep),
+                    SUBSTITUTE: (s,od,nw,n)=>{ s=String(s??''); od=String(od); nw=String(nw); if(n!=null){let c=0;return s.replace(new RegExp(od.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),m=>++c===n?nw:m);} return s.split(od).join(nw); },
+                    REPLACE: (s,st,n,nw)=>String(s??'').substring(0,(st??1)-1)+String(nw??'')+String(s??'').substring((st??1)-1+(n??0)),
+                    FIND: (f,w,st)=>{ const i=String(w??'').indexOf(String(f),(st??1)-1); return i===-1?'#N/A':i+1; },
+                    SEARCH: (f,w,st)=>{ const i=String(w??'').toLowerCase().indexOf(String(f??'').toLowerCase(),(st??1)-1); return i===-1?'#N/A':i+1; },
+                    EXACT: (a,b)=>String(a)===String(b),
+                    REPT: (s,n)=>String(s??'').repeat(Math.max(0,n??0)),
+                    CHAR: n=>String.fromCharCode(n),
+                    CODE: s=>String(s??'').charCodeAt(0),
+                    CLEAN: s=>String(s??'').replace(/[\x00-\x1F]/g,''),
+                    PADLEFT: (s,n,c)=>String(s??'').padStart(n??0, c??'0'),
+                    PADRIGHT: (s,n,c)=>String(s??'').padEnd(n??0, c??' '),
+                    SPLIT: (s,sep,i)=>{ const arr=String(s??'').split(sep??','); return i!=null ? (arr[i-1]??'') : arr; },
+                    REMOVEACCENTS: s=>_noAccent(s),
+                    REMOVEVN: s=>_noAccent(s),
+                    EXTRACTNUM: s=>{ const m=String(s??'').match(/[\d.,]+/g); return m?parseFloat(m.join('').replace(/,/g,'')):0; },
+                    EXTRACTTEXT: s=>String(s??'').replace(/[0-9.,\-+]/g,'').trim(),
+                    CONTAINS: (s,sub)=>String(s??'').includes(String(sub??'')),
+                    STARTSWITH: (s,pre)=>String(s??'').startsWith(String(pre??'')),
+                    ENDSWITH: (s,suf)=>String(s??'').endsWith(String(suf??'')),
+                    REPEAT: (s,n)=>String(s??'').repeat(Math.max(0,n??0)),
+                    NUMBERVALUE: s=>parseFloat(String(s??'').replace(/[^0-9.,-]/g,'').replace(/,/g,''))||0,
+                    VALUE: s=>{ const n=parseFloat(String(s??'').replace(/,/g,'')); return isNaN(n)?0:n; },
+                    // === SỐ HỌC ===
+                    INT: n=>Math.floor(parseFloat(n)||0),
+                    ROUND: (n,d)=>{ d=d??0; return parseFloat((parseFloat(n)||0).toFixed(d)); },
+                    ROUNDUP: (n,d)=>{ d=d??0; const f=Math.pow(10,d); return Math.ceil((parseFloat(n)||0)*f)/f; },
+                    ROUNDDOWN: (n,d)=>{ d=d??0; const f=Math.pow(10,d); return Math.floor((parseFloat(n)||0)*f)/f; },
+                    ABS: n=>Math.abs(parseFloat(n)||0),
+                    MOD: (n,d)=>(parseFloat(n)||0)%(parseFloat(d)||1),
+                    POWER: (n,p)=>Math.pow(parseFloat(n)||0,parseFloat(p)||1),
+                    SQRT: n=>Math.sqrt(parseFloat(n)||0),
+                    LOG: (n,b)=>b?Math.log(parseFloat(n))/Math.log(parseFloat(b)):Math.log10(parseFloat(n)),
+                    LN: n=>Math.log(parseFloat(n)||0),
+                    EXP: n=>Math.exp(parseFloat(n)||0),
+                    CEILING: (n,s)=>{ s=s||1; return Math.ceil((parseFloat(n)||0)/s)*s; },
+                    FLOOR: (n,s)=>{ s=s||1; return Math.floor((parseFloat(n)||0)/s)*s; },
+                    TRUNC: (n,d)=>{ d=d??0; const f=Math.pow(10,d); return Math.trunc((parseFloat(n)||0)*f)/f; },
+                    SIGN: n=>Math.sign(parseFloat(n)||0),
+                    RAND: ()=>Math.random(),
+                    RANDBETWEEN: (lo,hi)=>Math.floor(Math.random()*((hi||1)-(lo||0)+1))+(lo||0),
+                    // === ĐỊNH DẠNG SỐ ===
+                    TEXT: (v,fmt)=>{ if(!fmt)return String(v??''); const n=parseFloat(v); if(!isNaN(n)){if(fmt.includes('%'))return(n*100).toFixed(fmt.match(/\.(\d+)%/)?.[1]||0)+'%'; const dm=fmt.match(/0\.(0+)/); if(dm)return n.toFixed(dm[1].length); if(fmt==='#,##0'||fmt==='#,###')return n.toLocaleString('vi-VN');} return String(v??''); },
+                    FIXED: (n,d,nc)=>{ n=parseFloat(n)||0; d=d??2; return nc?n.toFixed(d):n.toLocaleString('vi-VN',{minimumFractionDigits:d,maximumFractionDigits:d}); },
+                    VND: n=>{ n=parseFloat(n)||0; return n.toLocaleString('vi-VN',{style:'currency',currency:'VND'}); },
+                    DOLLAR: (n,d)=>{ n=parseFloat(n)||0; d=d??2; return '$'+n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d}); },
+                    PERCENT: (n,d)=>{ n=parseFloat(n)||0; d=d??1; return (n*100).toFixed(d)+'%'; },
+                    NUMFORMAT: (n,fmt)=>{ n=parseFloat(n)||0; if(fmt==='VND')return n.toLocaleString('vi-VN',{style:'currency',currency:'VND'}); if(fmt==='USD')return n.toLocaleString('en-US',{style:'currency',currency:'USD'}); const dm=fmt?.match(/0\.(0+)/); if(dm)return n.toFixed(dm[1].length); return n.toLocaleString('vi-VN'); },
+                    // === NGÀY THÁNG ===
+                    TODAY: ()=>{ const d=new Date(); return `${_pad(d.getDate())}/${_pad(d.getMonth()+1)}/${d.getFullYear()}`; },
+                    NOW: ()=>{ const d=new Date(); return `${_pad(d.getDate())}/${_pad(d.getMonth()+1)}/${d.getFullYear()} ${_pad(d.getHours())}:${_pad(d.getMinutes())}`; },
+                    DAY: v=>{ const d=_pd(v); return d?d.getDate():0; },
+                    MONTH: v=>{ const d=_pd(v); return d?d.getMonth()+1:0; },
+                    YEAR: v=>{ const d=_pd(v); return d?d.getFullYear():0; },
+                    HOUR: v=>{ const d=_pd(v); return d?d.getHours():0; },
+                    MINUTE: v=>{ const d=_pd(v); return d?d.getMinutes():0; },
+                    SECOND: v=>{ const d=_pd(v); return d?d.getSeconds():0; },
+                    WEEKDAY: (v,m)=>{ const d=_pd(v); if(!d)return 0; const w=d.getDay(); return m===2?w===0?7:w:w+1; }, // m=2: 1=Mon..7=Sun
+                    WEEKNUM: v=>{ const d=_pd(v); if(!d)return 0; const s=new Date(d.getFullYear(),0,1); return Math.ceil(((d-s)/86400000+s.getDay()+1)/7); },
+                    DATEFORMAT: (v,fmt)=>_df(v,fmt),
+                    DATEPARSE: (s,fmt)=>_parseFmt(s,fmt),
+                    DATECONVERT: (s,srcFmt,destFmt)=>_df(_parseFmt(s,srcFmt), destFmt),
+                    DATEVALUE: s=>{ const d=_pd(s); return d?`${_pad(d.getDate())}/${_pad(d.getMonth()+1)}/${d.getFullYear()}`:''; },
+                    DATE: (y,m,d)=>{ const dt=new Date(y,m-1,d); return `${_pad(dt.getDate())}/${_pad(dt.getMonth()+1)}/${dt.getFullYear()}`; },
+                    DAYS: (e,s)=>{ const de=_pd(e),ds=_pd(s); return (de&&ds)?Math.round((de-ds)/86400000):0; },
+                    DATEDIF: (s,e,u)=>{ const ds=_pd(s),de=_pd(e); if(!ds||!de)return 0; u=String(u).toUpperCase(); if(u==='D')return Math.round((de-ds)/86400000); if(u==='M')return (de.getFullYear()-ds.getFullYear())*12+(de.getMonth()-ds.getMonth()); if(u==='Y')return de.getFullYear()-ds.getFullYear(); return 0; },
+                    EDATE: (v,m)=>{ const d=_pd(v); if(!d)return ''; const r=new Date(d); r.setMonth(r.getMonth()+(m||0)); return `${_pad(r.getDate())}/${_pad(r.getMonth()+1)}/${r.getFullYear()}`; },
+                    EOMONTH: (v,m)=>{ const d=_pd(v); if(!d)return ''; const r=new Date(d.getFullYear(),d.getMonth()+(m||0)+1,0); return `${_pad(r.getDate())}/${_pad(r.getMonth()+1)}/${r.getFullYear()}`; },
+                    ADDDAYS: (v,n)=>{ const d=_pd(v); if(!d)return ''; const r=new Date(d.getTime()+(n||0)*86400000); return `${_pad(r.getDate())}/${_pad(r.getMonth()+1)}/${r.getFullYear()}`; },
+                    ADDMONTHS: (v,n)=>{ const d=_pd(v); if(!d)return ''; const r=new Date(d); r.setMonth(r.getMonth()+(n||0)); return `${_pad(r.getDate())}/${_pad(r.getMonth()+1)}/${r.getFullYear()}`; },
+                    ADDYEARS: (v,n)=>{ const d=_pd(v); if(!d)return ''; const r=new Date(d); r.setFullYear(r.getFullYear()+(n||0)); return `${_pad(r.getDate())}/${_pad(r.getMonth()+1)}/${r.getFullYear()}`; },
+                    QUARTEROF: v=>{ const d=_pd(v); return d?Math.ceil((d.getMonth()+1)/3):0; },
+                    ISWEEKEND: v=>{ const d=_pd(v); return d?d.getDay()===0||d.getDay()===6:false; },
+                    ISWORKDAY: v=>{ const d=_pd(v); return d?d.getDay()!==0&&d.getDay()!==6:false; },
+                    // === THỐNG KÊ ===
+                    SUM: (...a)=>a.flat().reduce((s,x)=>s+(parseFloat(x)||0),0),
+                    AVERAGE: (...a)=>{ const arr=a.flat().map(x=>parseFloat(x)).filter(x=>!isNaN(x)); return arr.length?arr.reduce((s,x)=>s+x,0)/arr.length:0; },
+                    MAX: (...a)=>Math.max(...a.flat().map(x=>parseFloat(x)||0)),
+                    MIN: (...a)=>Math.min(...a.flat().map(x=>parseFloat(x)||0)),
+                    COUNT: (...a)=>a.flat().filter(x=>!isNaN(parseFloat(x))).length,
+                    COUNTA: (...a)=>a.flat().filter(x=>x!==null&&x!==undefined&&x!=='').length,
+                    // === LOGIC & KIỂM TRA ===
+                    AND: (...a)=>a.flat().every(Boolean),
+                    OR: (...a)=>a.flat().some(Boolean),
+                    NOT: v=>!v,
+                    XOR: (...a)=>a.flat().filter(Boolean).length%2!==0,
+                    ISBLANK: v=>v===null||v===undefined||v==='',
+                    ISNUMBER: v=>!isNaN(parseFloat(v))&&v!==''&&v!==null,
+                    ISTEXT: v=>typeof v==='string'&&isNaN(parseFloat(v)),
+                    ISERROR: v=>v===null||String(v).startsWith('#'),
+                    ISDATE: v=>_pd(v)!==null,
+                    TRUE: true, FALSE: false,
+                };
+                result = result.map(row => {
+                    const newRow = { ...row };
+                    try {
+                        // Chuẩn hóa công thức: chuyển = thành == (nếu không nằm trong chuỗi)
+                        // Lưu ý: Chỉ thay thế các dấu = đơn lẻ không đi kèm > hoặc <
+                        let processedFormula = formula.replace(/([^<>!])=([^=])/g, '$1==$2');
+                        
+                        const expr = processedFormula.replace(/\[([^\]]+)\]/g, (_, col) => {
+                            // Tìm cột không phân biệt hoa thường và khoảng trắng
+                            const realKey = Object.keys(row).find(k => k.trim().toLowerCase() === col.trim().toLowerCase()) || col;
+                            let v = row[realKey];
+                            if (v === null || v === undefined || v === '') return '""';
+                            const s = String(v).trim();
+                            // Nếu chuỗi chứa dấu ngày tháng (/ hoặc -) thì BUỘC phải là chuỗi
+                            if (s.includes('/') || s.includes('-') || s.includes('.')) {
+                                return '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"';
+                            }
+                            if (s.startsWith('0') && s.length > 1) {
+                                return '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"';
+                            }
+                            const n = parseFloat(s.replace(/,/g, ''));
+                            return isNaN(n) ? '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"' : String(n);
+                        });
+                        const _XL_WITH_ALIASES = { ..._XL, COT: "", C1: "", C2: "", DK: false };
+                        newRow[newCol] = new Function('_XL', `with(_XL){return ${expr};}`)(_XL_WITH_ALIASES);
+                    } catch(e) { newRow[newCol] = '#LỖI: ' + e.message; }
+                    return newRow;
+                });
+            }
         }
     } catch (e) { console.error("Engine Error:", e); }
     return result;
@@ -375,4 +595,10 @@ async function readExcelFile(file, limit = 2000) {
             }
         }
     };
+}
+
+// Expose ra global để app-studio.js có thể gọi được
+if (typeof window !== 'undefined') {
+    window.readExcelFile = readExcelFile;
+    window.ExcelWorkerAPI = ExcelWorkerAPI;
 }

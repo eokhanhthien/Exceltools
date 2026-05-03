@@ -57,6 +57,7 @@ function createStep(type) {
     else if (type === 'MATH_COMPUTE') { title = "Công Thức Toán Học"; config = { newColName: "", expression: "" }; }
     else if (type === 'SELECT_COLUMNS') { title = "Chọn/Đổi Tên Cột"; config = { columns: [] }; }
     else if (type === 'COMPARE') { title = "So Sánh 2 File"; config = { compareData: null, baseKey: "", compareKey: "", baseCompareCol: "", secondaryCompareCol: "", conditionType: "THRESHOLD_INC", diffThreshold: 50000000, topXValue: 30 }; }
+    else if (type === 'FORMULA_BUILDER') { title = "Công Thức Excel"; config = { newColName: '', formula: '' }; }
 
     return { id, type, title, config, disabled: false };
 }
@@ -153,6 +154,7 @@ function getStepDesc(step) {
     if (step.type === 'MATH_COMPUTE') return step.config.newColName ? `Làm toán: ${step.config.newColName}` : 'Chưa cấu hình';
     if (step.type === 'SELECT_COLUMNS') return step.config.columns.length ? `Giữ ${step.config.columns.length} cột xuất` : 'Chưa cấu hình';
     if (step.type === 'COMPARE') return step.config.compareData ? `So sánh cột ${step.config.baseCompareCol || '?'}` : 'Chưa cấu hình file';
+    if (step.type === 'FORMULA_BUILDER') return step.config.formula ? `→ cột "${step.config.newColName || '?'}" | ${step.config.formula.substring(0,28)}...` : 'Chưa có công thức';
     return '';
 }
 
@@ -453,6 +455,41 @@ function renderPreviewAtActiveStep() {
         window.addEventListener('resize', () => {
             // Không làm gì, x-spreadsheet tự kéo theo function view config
         });
+
+        // === CÔ LẬP CONFIG PANEL KHỎI X-SPREADSHEET ===
+        // Khi user click vào config panel → force x-spreadsheet thoát khỏi cell-edit mode
+        const configPanel = document.getElementById('config-panel');
+        if (configPanel) {
+            configPanel.addEventListener('mousedown', () => {
+                // Blur container của x-spreadsheet để nó thoát cell-edit mode
+                const xsEl = document.querySelector('#x-spreadsheet-container .x-spreadsheet');
+                if (xsEl) xsEl.blur();
+                // Ép Escape để cancel bất kỳ cell đang edit
+                const xsContainer = document.getElementById('x-spreadsheet-container');
+                if (xsContainer) {
+                    xsContainer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: false }));
+                }
+            }, true);
+        }
+
+        // === KEYBOARD GUARD (capture phase) ===
+        // Khi focus đang ở INPUT/TEXTAREA/SELECT bất kỳ → chặn x-spreadsheet nhận keyboard
+        document.addEventListener('keydown', e => {
+            const active = document.activeElement;
+            if (!active) return;
+            const tag = active.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+                e.stopImmediatePropagation();
+            }
+        }, true);
+        document.addEventListener('keyup', e => {
+            const active = document.activeElement;
+            if (!active) return;
+            const tag = active.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+                e.stopImmediatePropagation();
+            }
+        }, true);
     }
 
     gridInstance.loadData(sheetData);
@@ -1327,6 +1364,280 @@ function renderConfigPanel() {
     }
     
     /** BƯỚC SO SÁNH (COMPARE) **/
+    /** BƯỚC XÂY CÔNG THỨC KÉO THẢ **/
+    else if (step.type === 'FORMULA_BUILDER') {
+        const sampleRow = AppState.rootData[0] || {};
+        const fbHeaders = availableHeaders;
+        const FN_CATS = [
+            { cat: '⚙️ Điều kiện', color: '#7c3aed', fns: [
+                { n: 'IF',      tpl: 'IF(DK, "neu dung", "neu sai")',                      d: 'Nếu điều kiện → đúng/sai' },
+                { n: 'IFS',     tpl: 'IFS(DK1,"ket1", DK2,"ket2", "mac dinh")',           d: 'Nhiều điều kiện liên tiếp' },
+                { n: 'IFERROR', tpl: 'IFERROR(BIEU_THUC, "Loi")',                          d: 'Bắt lỗi, trả giá trị thay thế' },
+                { n: 'IFBLANK', tpl: 'IFBLANK(COT, "Trong")',                              d: 'Nếu rỗng thì trả giá trị thay thế' },
+                { n: 'SWITCH',  tpl: 'SWITCH(COT, "A","Loai 1", "B","Loai 2", "Khac")',   d: 'Khớp theo giá trị (giống CHOOSE)' },
+            ]},
+            { cat: '📝 Chuỗi văn bản', color: '#059669', fns: [
+                { n: 'LEFT',        tpl: 'LEFT(COT, 5)',                 d: 'Lấy n ký tự bên trái' },
+                { n: 'RIGHT',       tpl: 'RIGHT(COT, 3)',                d: 'Lấy n ký tự bên phải' },
+                { n: 'MID',         tpl: 'MID(COT, 2, 4)',               d: 'Lấy từ vị trí bắt đầu, n ký tự' },
+                { n: 'LEN',         tpl: 'LEN(COT)',                     d: 'Đếm tổng số ký tự' },
+                { n: 'TRIM',        tpl: 'TRIM(COT)',                    d: 'Xóa khoảng trắng thừa 2 đầu và giữa' },
+                { n: 'UPPER',       tpl: 'UPPER(COT)',                   d: 'Chuyển toàn bộ sang CHỮ HOA' },
+                { n: 'LOWER',       tpl: 'LOWER(COT)',                   d: 'Chuyển toàn bộ sang chữ thường' },
+                { n: 'PROPER',      tpl: 'PROPER(COT)',                  d: 'Viết Hoa Chữ Đầu Mỗi Từ' },
+                { n: 'SUBSTITUTE',  tpl: 'SUBSTITUTE(COT, "cu", "moi")', d: 'Thay thế toàn bộ chuỗi con' },
+                { n: 'REPLACE',     tpl: 'REPLACE(COT, 1, 3, "moi")',    d: 'Thay n ký tự từ vị trí chỉ định' },
+                { n: 'CONCAT',      tpl: 'CONCAT(C1, C2)',               d: 'Nối chuỗi' },
+                { n: 'TEXT',        tpl: 'TEXT(COT, "0.00")',            d: 'Định dạng số' },
+                { n: 'VALUE',       tpl: 'VALUE(COT)',                   d: 'Chuyển chuỗi → số' },
+            ]},
+            { cat: '🔢 Số học', color: '#2563eb', fns: [
+                { n: 'ROUND',      tpl: 'ROUND(COT, 0)',       d: 'Làm tròn số' },
+                { n: 'ABS',        tpl: 'ABS(COT)',            d: 'Giá trị tuyệt đối' },
+                { n: 'MOD',        tpl: 'MOD(COT, 10)',        d: 'Phần dư' },
+                { n: 'SUM',        tpl: 'SUM(C1, C2)',         d: 'Tổng cộng' },
+                { n: 'AVERAGE',    tpl: 'AVERAGE(C1, C2)',     d: 'Trung bình' },
+                { n: 'MAX',        tpl: 'MAX(C1, C2)',         d: 'Lớn nhất' },
+                { n: 'MIN',        tpl: 'MIN(C1, C2)',         d: 'Nhỏ nhất' },
+                { n: 'COUNT',      tpl: 'COUNT(C1, C2)',       d: 'Đếm số' },
+            ]},
+            { cat: '🔗 Logic & Kiểm tra', color: '#b45309', fns: [
+                { n: 'AND',      tpl: 'AND(C1>0, C2<100)',    d: 'VÀ (&&)' },
+                { n: 'OR',       tpl: 'OR(C1=="A", C2=="B")', d: 'HOẶC (||)' },
+                { n: 'NOT',      tpl: 'NOT(ISBLANK(COT))',    d: 'Phủ định' },
+                { n: 'ISBLANK',  tpl: 'ISBLANK(COT)',         d: 'Kiểm tra rỗng' },
+                { n: 'ISNUMBER', tpl: 'ISNUMBER(COT)',        d: 'Kiểm tra số' },
+            ]},
+            { cat: '📅 Ngày Tháng', color: '#0891b2', fns: [
+                { n: 'DATECONVERT',tpl: 'DATECONVERT(COT, "dd/mm/yyyy", "mm-dd-yyyy")', d: 'Chuyển định dạng chủ động (Gốc → Mới)' },
+                { n: 'DATEFORMAT', tpl: 'DATEFORMAT(COT, "dd-MM-yyyy")', d: 'Đổi định dạng (Máy tự đoán ngày gốc)' },
+                { n: 'DATEDIF',    tpl: 'DATEDIF(C1, C2, "D")',             d: 'Khoảng cách ngày' },
+                { n: 'TODAY',      tpl: 'TODAY()',                           d: 'Ngày hôm nay' },
+                { n: 'DAYS',       tpl: 'DAYS(C2, C1)',                     d: 'Số ngày chênh lệch' },
+                { n: 'ADDDAYS',    tpl: 'ADDDAYS(COT, 7)',                  d: 'Cộng thêm n ngày' },
+                { n: 'DATEVALUE',  tpl: 'DATEVALUE("31/12/2024")',           d: 'Chuyển chữ thành ngày' },
+            ]},
+            { cat: '💰 Định Dạng Số', color: '#dc2626', fns: [
+                { n: 'VND',       tpl: 'VND(COT)',              d: 'Định dạng tiền VND' },
+                { n: 'DOLLAR',    tpl: 'DOLLAR(COT, 2)',        d: 'Định dạng tiền USD' },
+                { n: 'NUMFORMAT', tpl: 'NUMFORMAT(COT, "VND")', d: 'Format nâng cao' },
+            ]},
+            { cat: '🔧 Tiện Ích', color: '#6b7280', fns: [
+                { n: 'REMOVEACCENTS', tpl: 'REMOVEACCENTS(COT)',          d: 'Bỏ dấu tiếng Việt' },
+                { n: 'REMOVEVN',      tpl: 'REMOVEVN(COT)',               d: 'Bỏ dấu tiếng Việt' },
+                { n: 'EXTRACTNUM',    tpl: 'EXTRACTNUM(COT)',             d: 'Lấy số từ chuỗi' },
+                { n: 'EXTRACTTEXT',   tpl: 'EXTRACTTEXT(COT)',            d: 'Lấy chữ từ chuỗi' },
+            ]}
+        ];
+
+        function fbPreview(formula) {
+            const _pad = n => String(n).padStart(2,'0');
+            const prevEl = document.getElementById('fb-preview-result');
+            if (!prevEl) return;
+            if (!formula || !formula.trim()) { prevEl.textContent = ''; return; }
+            try {
+                const _parseFmt = (s, fmt) => {
+                    if (s === null || s === undefined || s === '') return null;
+                    if (s instanceof Date) return isNaN(s.getTime()) ? null : s;
+                    const cleanS = String(s).trim();
+                    const n = parseFloat(cleanS.replace(/,/g, ''));
+                    if (!isNaN(n) && n > 10000 && n < 80000 && !cleanS.includes('/') && !cleanS.includes('-')) {
+                        return new Date(Math.round((n - 25569) * 86400 * 1000));
+                    }
+                    const sParts = cleanS.split(/[\/\-\.\s]+/).filter(x => x !== '');
+                    const fParts = (fmt || '').toLowerCase().split(/[\/\-\.\s]+/).filter(x => x !== '');
+                    if (sParts.length < 3 || fParts.length < 3) return null;
+                    let _d1, _m1, _y1;
+                    fParts.forEach((part, i) => {
+                        if (part.includes('d')) _d1 = parseInt(sParts[i]);
+                        if (part.includes('m')) _m1 = parseInt(sParts[i]);
+                        if (part.includes('y')) _y1 = parseInt(sParts[i]);
+                    });
+                    if (_y1 < 100) _y1 += (_y1 > 50 ? 1900 : 2000);
+                    const dt = new Date(_y1, _m1 - 1, _d1);
+                    return (isNaN(dt.getTime()) || dt.getDate() !== _d1) ? null : dt;
+                };
+                const _pd = v => {
+                    if (!v && v !== 0) return null;
+                    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+                    const s = String(v).trim();
+                    if (s === '' || s.toLowerCase() === 'invalid date') return null;
+                    if (s.includes('/') || s.includes('-') || s.includes('.')) {
+                        const p = s.split(/[\/\-\.\s]+/).filter(x => x !== '');
+                        if (p.length >= 3) {
+                            let _d1, _m1, _y1;
+                            if (p[0].length <= 2 && p[2].length >= 2) {
+                                _d1 = parseInt(p[0]); _m1 = parseInt(p[1]); _y1 = parseInt(p[2]);
+                                if (_y1 < 100) _y1 += (_y1 > 50 ? 1900 : 2000);
+                                const dt = new Date(_y1, _m1 - 1, _d1);
+                                if (!isNaN(dt.getTime()) && dt.getDate() === _d1) return dt;
+                            }
+                            if (p[0].length >= 4) {
+                                _y1 = parseInt(p[0]); _m1 = parseInt(p[1]); _d1 = parseInt(p[2]);
+                                const dt = new Date(_y1, _m1 - 1, _d1);
+                                if (!isNaN(dt.getTime()) && dt.getDate() === _d1) return dt;
+                            }
+                        }
+                    }
+                    const n = parseFloat(s.replace(/,/g, ''));
+                    if (!isNaN(n) && n > 10000 && n < 80000 && !s.includes('/') && !s.includes('-')) {
+                        return new Date(Math.round((n - 25569) * 86400 * 1000));
+                    }
+                    const p = new Date(s); return isNaN(p.getTime()) ? null : p;
+                };
+                const _df = (v, fmt) => {
+                    const d = _pd(v); if (!d) return ''; 
+                    const _f = (fmt || 'dd/MM/yyyy').toLowerCase();
+                    const _y = d.getFullYear(), _m = d.getMonth() + 1, _dy = d.getDate();
+                    const _h = d.getHours(), _mi = d.getMinutes(), _s = d.getSeconds();
+                    const MO = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+                    const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                    return _f.replace(/yyyy|yy|mmmm|mmm|mm|m|dd|d|hh|h|nn|n|ss|s/gi, tok => {
+                        const t = tok.toLowerCase();
+                        if (t==='yyyy') return _y; if (t==='yy') return String(_y).slice(-2);
+                        if (t==='mmmm') return MO[d.getMonth()]; if (t==='mmm') return mo[d.getMonth()];
+                        if (t==='mm') return _pad(_m); if (t==='m') return _m;
+                        if (t==='dd') return _pad(_dy); if (t==='d') return _dy;
+                        if (t==='hh') return _pad(_h); if (t==='nn') return _pad(_mi);
+                        if (t==='ss') return _pad(_s);
+                        return tok;
+                    });
+                };
+                const _noAccent = s => String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[đĐ]/g,c=>c==='đ'?'d':'D');
+
+                const _XL = {
+                    IF:(c,t,f)=>c?t:f, IFS:(...a)=>{for(let i=0;i<a.length-1;i+=2){if(a[i])return a[i+1];}return a[a.length-1];},
+                    IFERROR:(v,e)=>(v===null||v===undefined||String(v).startsWith('#'))?e:v,
+                    IFBLANK:(v,e)=>(v===null||v===undefined||v==='')?e:v,
+                    SWITCH:(val,...a)=>{for(let i=0;i<a.length-1;i+=2){if(val==a[i])return a[i+1];}return a[a.length-1];},
+                    LEFT:(s,n)=>String(s??'').substring(0,n??1), RIGHT:(s,n)=>{const str=String(s??'');n=n??1;return str.substring(str.length-n);},
+                    MID:(s,st,n)=>String(s??'').substring((st??1)-1,(st??1)-1+(n??1)), LEN:(s)=>String(s??'').length,
+                    TRIM:(s)=>String(s??'').trim(), UPPER:(s)=>String(s??'').toUpperCase(), LOWER:(s)=>String(s??'').toLowerCase(),
+                    PROPER:(s)=>String(s??'').replace(/\b\w/g,c=>c.toUpperCase()).replace(/\B\w/g,c=>c.toLowerCase()),
+                    CONCATENATE:(...a)=>a.map(x=>x??'').join(''), CONCAT:(...a)=>a.map(x=>x??'').join(''),
+                    TEXTJOIN:(sep,ig,...a)=>a.flat().filter(x=>!ig||(x!==null&&x!==undefined&&x!=='')).join(sep),
+                    SUBSTITUTE:(s,od,nw,n)=>{s=String(s??'');if(n!=null){let c=0;return s.replace(new RegExp(String(od).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'),m=>++c===n?String(nw):m);}return s.split(String(od)).join(String(nw));},
+                    REPLACE:(s,st,n,nw)=>String(s??'').substring(0,(st??1)-1)+String(nw??'')+String(s??'').substring((st??1)-1+(n??0)),
+                    FIND:(f,w,st)=>{const i=String(w??'').indexOf(String(f),(st??1)-1);return i===-1?'#N/A':i+1;},
+                    SEARCH:(f,w,st)=>{const i=String(w??'').toLowerCase().indexOf(String(f??'').toLowerCase(),(st??1)-1);return i===-1?'#N/A':i+1;},
+                    TEXT:(v,fmt)=>{if(!fmt)return String(v??'');const n=parseFloat(v);if(!isNaN(n)){if(fmt.includes('%'))return(n*100).toFixed(0)+'%';if(fmt.includes('.00'))return n.toFixed(2);if(fmt.includes('.0'))return n.toFixed(1);}return String(v??'');},
+                    VALUE:(s)=>{const n=parseFloat(String(s??'').replace(/,/g,''));return isNaN(n)?0:n;},
+                    EXACT:(a,b)=>String(a)===String(b), PADLEFT:(s,n,c)=>String(s??'').padStart(n??0, c??'0'), PADRIGHT:(s,n,c)=>String(s??'').padEnd(n??0, c??' '),
+                    REMOVEACCENTS:s=>_noAccent(s), REMOVEVN:s=>_noAccent(s), EXTRACTNUM:s=>{const m=String(s??'').match(/[\d.,]+/g);return m?parseFloat(m.join('').replace(/,/g,'')):0;},
+                    ROUND:(n,d)=>{d=d??0;return parseFloat((parseFloat(n)||0).toFixed(d));},
+                    VND:n=>parseFloat(n||0).toLocaleString('vi-VN',{style:'currency',currency:'VND'}),
+                    TODAY:()=>_df(new Date(),'dd/MM/yyyy'), DATEFORMAT:(v,fmt)=>_df(v,fmt),
+                    DATECONVERT:(s,sf,df)=>_df(_parseFmt(s,sf), df),
+                    SUM:(...a)=>a.flat().reduce((s,x)=>s+(parseFloat(x)||0),0),
+                    MAX:(...a)=>Math.max(...a.flat().map(x=>parseFloat(x)||0)), MIN:(...a)=>Math.min(...a.flat().map(x=>parseFloat(x)||0)),
+                    ISBLANK:(v)=>v===null||v===undefined||v==='', ISNUMBER:(v)=>!isNaN(parseFloat(v))&&v!==null, TRUE:true, FALSE:false,
+                };
+
+                let processedFormula = formula.replace(/([^<>!])=([^=])/g, '$1==$2');
+                const expr = processedFormula.replace(/\[([^\]]+)\]/g, (_, col) => {
+                    // Tìm cột không phân biệt hoa thường và khoảng trắng
+                    const realKey = Object.keys(sampleRow).find(k => k.trim().toLowerCase() === col.trim().toLowerCase()) || col;
+                    const v = sampleRow[realKey];
+                    if (v === null || v === undefined || v === '') return '""';
+                    const s = String(v).trim();
+                    // Nếu chuỗi chứa dấu ngày tháng (/ hoặc -) thì BUỘC phải là chuỗi
+                    if (s.includes('/') || s.includes('-') || s.includes('.')) {
+                        return '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"';
+                    }
+                    if (s.startsWith('0') && s.length > 1) {
+                        return '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"';
+                    }
+                    const n = parseFloat(s.replace(/,/g, ''));
+                    return isNaN(n) ? '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"' : String(n);
+                });
+                const res = new Function('_XL', 'with(_XL){return ' + expr + ';}')(_XL);
+                
+                // Trích xuất các cột được dùng để hiển thị giá trị thực tế của dòng mẫu
+                const usedCols = [...formula.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
+                const debugInfo = usedCols.map(c => `${c}: "${sampleRow[c] || ''}"`).join(' | ');
+                
+                prevEl.innerHTML = `<div>▶ Kết quả mẫu: <span style="color:var(--success)">${res === undefined ? '' : res}</span></div>
+                                   <div style="font-size:10px;color:#6b7280;margin-top:2px;font-weight:400;">(Dữ liệu dòng 1: ${debugInfo})</div>`;
+            } catch(e) {
+                prevEl.textContent = '⚠️ ' + e.message;
+                prevEl.style.color = '#dc2626';
+            }
+        }
+
+        const colChips = fbHeaders.map(h => `<button class="fb-col-btn" data-col="${h.replace(/"/g,'&quot;')}" style="padding:2px 7px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid #6366f1;color:#6366f1;background:#6366f110;white-space:nowrap;">[${h}]</button>`).join('');
+
+        const fnRefHtml = FN_CATS.map(cat => `
+            <div style="margin-bottom:8px;">
+                <div style="font-size:10px;font-weight:700;color:${cat.color};margin-bottom:4px;">${cat.cat}</div>
+                <div style="display:flex;flex-wrap:wrap;gap:3px;">
+                    ${cat.fns.map(f => `<button class="fb-fn-btn" data-tpl="${f.tpl.replace(/"/g,'&quot;')}" title="${f.d}" style="padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid ${cat.color};color:${cat.color};background:${cat.color}10;">${f.n}</button>`).join('')}
+                </div>
+            </div>`).join('');
+
+        dynamicPane.innerHTML = `
+            <h3 class="config-title" style="color:var(--success)">✅ Công Thức Excel (V2.0 - DATECONVERT READY)</h3>
+            <p class="config-desc">Viết công thức theo cú pháp Excel. Dùng <b>[Tên Cột]</b> để tham chiếu cột dữ liệu.</p>
+            <div style="margin-bottom:10px;">
+                <label class="form-label">Tên cột kết quả</label>
+                <input id="fb-col-name" class="form-control" style="height:32px;" placeholder="VD: Phan_Loai" value="${step.config.newColName || ''}" />
+            </div>
+            <label class="form-label">📝 Thanh Công Thức</label>
+            <textarea id="fb-formula" rows="3" style="width:100%;font-family:monospace;font-size:13px;padding:8px;border:2px solid var(--primary);border-radius:6px;resize:vertical;box-sizing:border-box;line-height:1.5;" placeholder='VD: IF([So du]>=5000000, "VIP", "Thuong")'>${(step.config.formula || '').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+            <div id="fb-preview-result" style="font-size:12px;font-weight:600;margin:4px 0 10px 0;min-height:16px;"></div>
+            <label class="form-label">📌 Cột dữ liệu (click để chèn)</label>
+            <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:12px;max-height:70px;overflow-y:auto;padding:4px 0;">${colChips}</div>
+            <label class="form-label">📖 Tham chiếu hàm (click để chèn mẫu)</label>
+            <div style="background:var(--surface);border-radius:8px;padding:8px;border:1px solid var(--border);max-height:300px;overflow-y:auto;">${fnRefHtml}</div>
+        `;
+
+        const ta = document.getElementById('fb-formula');
+        ta.value = step.config.formula || '';
+        fbPreview(ta.value);
+
+        let fbDebounceTimer = null;
+        ta.addEventListener('input', () => {
+            step.config.formula = ta.value;
+            fbPreview(ta.value);
+            saveStateToLocal();
+            clearTimeout(fbDebounceTimer);
+            fbDebounceTimer = setTimeout(() => {
+                const selStart = ta.selectionStart;
+                const selEnd   = ta.selectionEnd;
+                recalculatePipeline();
+                setTimeout(() => {
+                    const newTa = document.getElementById('fb-formula');
+                    if (newTa) {
+                        newTa.focus();
+                        newTa.selectionStart = selStart;
+                        newTa.selectionEnd   = selEnd;
+                    }
+                }, 80);
+            }, 700);
+        });
+        document.getElementById('fb-col-name').addEventListener('input', e => {
+            step.config.newColName = e.target.value.trim();
+            saveStateToLocal();
+        });
+        document.querySelectorAll('.fb-col-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const ins = '[' + btn.dataset.col + ']';
+                const s = ta.selectionStart, e2 = ta.selectionEnd;
+                ta.value = ta.value.substring(0, s) + ins + ta.value.substring(e2);
+                ta.selectionStart = ta.selectionEnd = s + ins.length;
+                ta.focus(); ta.dispatchEvent(new Event('input'));
+            });
+        });
+        document.querySelectorAll('.fb-fn-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const ins = btn.dataset.tpl;
+                const s = ta.selectionStart, e2 = ta.selectionEnd;
+                ta.value = ta.value.substring(0, s) + ins + ta.value.substring(e2);
+                ta.selectionStart = ta.selectionEnd = s + ins.length;
+                ta.focus(); ta.dispatchEvent(new Event('input'));
+            });
+        });
+    }
+
     else if (step.type === 'COMPARE') {
         let cmpSourceOpts = `<option value="UPLOAD">-- 📥 Tải File Excel Mới --</option>`;
         if (AppState.rootFileCache && AppState.rootFileCache.sheetNames.length > 0) {
