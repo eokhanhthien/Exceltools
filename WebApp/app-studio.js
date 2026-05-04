@@ -183,41 +183,41 @@ document.querySelectorAll('#dropdown-add-step a').forEach(a => {
 // --- EXECUTION (ENGINE BRIDGE) ---
 // Chạy engine tính toán toàn bộ các node từ trên xuống dưới
 async function recalculatePipeline(silent = false) {
-    if (AppState.rootData.length === 0) return;
+    if (!AppState.rootFileCache || !AppState.rootFileCache.workerApi) return;
     
     document.getElementById('preview-mini-loading').classList.remove('hidden');
     
     const pipelineContainer = document.getElementById('pipeline-steps');
     if (pipelineContainer && !silent) pipelineContainer.classList.add('is-calculating');
     
-    setTimeout(async () => {
-        let currentData = [...AppState.rootData];
-        // CHỈ LƯU 500 DÒNG ĐỂ PREVIEW LÊN UI - CỨU RAM CHO WEB TĨNH
-        AppState.cachedResults.set('ROOT', AppState.rootData.slice(0, 500));
-
-        try {
-            for (const step of AppState.steps) {
-                if (!step.disabled) {
-                    currentData = applyStepToData(currentData, step);
-                }
-                // Chỉ lưu bản xem trước 500 dòng. Mảng currentData khổng lồ cũ sẽ bị Garbage Collector dọn dẹp ngay lập tức!
-                AppState.cachedResults.set(step.id, currentData ? currentData.slice(0, 500) : []); 
-            }
-            saveStateToLocal(); // Tự động lưu thiết lập pipeline
-        } catch (err) {
-            console.error("Lỗi Pipeline:", err);
-        }
-
+    try {
+        const fullData = AppState.rootFileCache.sheetsData[AppState.rootSelectedSheet].fullData;
+        
+        // Gọi Worker chạy Pipeline trên TOÀN BỘ dữ liệu để đảm bảo chính xác 100%
+        const result = await AppState.rootFileCache.workerApi.runPipeline(AppState.steps, fullData);
+        
+        // Cập nhật Cache kết quả (dùng cho Preview)
+        // Lưu ý: Worker trả về previewData (1000 dòng đầu của kết quả cuối cùng)
+        // Chúng ta cần lưu kết quả trung gian nếu muốn preview từng bước, 
+        // nhưng để đơn giản và chính xác tuyệt đối cho bước hiện tại:
+        AppState.cachedResults.set(AppState.activeStepId, result.previewData);
+        
+        // Nếu muốn xem preview của CÁC bước trước đó, ta có thể cần chạy lại pipeline từng phần
+        // Tuy nhiên thường người dùng quan tâm kết quả tại bước đang đứng.
+        
+        console.log(`Pipeline Sync: ${result.totalRows} dòng kết quả.`);
+        
+        saveStateToLocal(); // Tự động lưu thiết lập pipeline
         renderPipelineSteps(); // Cập nhật Mô tả
         renderPreviewAtActiveStep();
-        
+    } catch (err) {
+        console.error("Lỗi Pipeline Worker:", err);
+    } finally {
         document.getElementById('preview-mini-loading').classList.add('hidden');
-        
-        // Tắt animation dây chuyền sau khi render xong 1 khoảng nhỏ để có cảm giác luồng chạy
         if (pipelineContainer) {
             setTimeout(() => pipelineContainer.classList.remove('is-calculating'), 400);
         }
-    }, 10);
+    }
 }
 
 // --- QUẢN LÝ KỊCH BẢN (PRESET: SAVE / LOAD) ---
@@ -384,7 +384,7 @@ function renderPreviewAtActiveStep() {
     const headers = renderData.length > 0 ? Object.keys(renderData[0]) : getHeadersAtCurrentStep();
     
     // Build x-spreadsheet data format
-    let limit = Math.min(1000, renderData.length); // Tải tối đa 1000 dòng preview cho nhẹ trình duyệt
+    let limit = Math.min(100, renderData.length); // Hiển thị 100 dòng đầu tiên theo yêu cầu
     let rowsObj = {};
     
     // Header Row (Dòng 0)
@@ -640,7 +640,7 @@ function renderConfigPanel() {
                         AppState.rootFileCache.workerApi.terminate();
                     }
 
-                    const result = await readExcelFile(e.target.files[0]);
+                    const result = await readExcelFile(e.target.files[0], 5000);
                     AppState.rootFileCache = result;
                     AppState.rootSelectedSheet = result.sheetNames[0];
                     AppState.rootHeaderRowIndex = 0;

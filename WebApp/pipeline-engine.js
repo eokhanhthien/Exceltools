@@ -132,6 +132,123 @@ function applyStepToData(sourceData, step) {
                     return finalRow;
                 });
             }
+        } else if (step.type === 'SELECT_COLUMNS') {
+            if (config.columns && config.columns.length > 0) {
+                result = result.map(row => {
+                    const newRow = {};
+                    config.columns.forEach(c => {
+                        const val = row[c.oldName];
+                        newRow[c.newName || c.oldName] = (val === undefined || val === null) ? "" : val;
+                    });
+                    return newRow;
+                });
+            }
+        } else if (step.type === 'CONDITIONAL_COLUMN') {
+            const newCol = (config.newColName && config.newColName.trim() !== '') ? config.newColName : 'Kết Quả';
+            const rules = config.rules || [];
+            const elseVal = config.elseVal;
+            const elseType = config.elseType || 'VALUE';
+
+            result = result.map(row => {
+                const newRow = { ...row };
+                let matched = false;
+                let finalVal = "";
+
+                for (const rule of rules) {
+                    let ruleMatch = true;
+                    for (let i = 0; i < rule.conditions.length; i++) {
+                        const cond = rule.conditions[i];
+                        const cellVal = row[cond.col];
+                        let targetVal = cond.val;
+                        if (cond.type === 'COLUMN') targetVal = row[cond.val];
+
+                        const isMatch = checkSingleCondition(cellVal, cond.op, targetVal);
+                        
+                        if (i === 0) {
+                            ruleMatch = isMatch;
+                        } else {
+                            if (cond.logic === 'OR') {
+                                ruleMatch = ruleMatch || isMatch;
+                            } else {
+                                ruleMatch = ruleMatch && isMatch;
+                            }
+                        }
+                    }
+
+                    if (ruleMatch) {
+                        matched = true;
+                        finalVal = rule.thenType === 'COLUMN' ? row[rule.thenVal] : rule.thenVal;
+                        break;
+                    }
+                }
+
+                if (!matched) {
+                    finalVal = elseType === 'COLUMN' ? row[elseVal] : elseVal;
+                }
+
+                newRow[newCol] = finalVal;
+                return newRow;
+            });
+        } else if (step.type === 'COMPARE') {
+            if (config.compareData && config.baseKey && config.compareKey) {
+                const compareMap = new Map();
+                config.compareData.forEach(cRow => {
+                    const k = String(cRow[config.compareKey] || "").trim().toUpperCase();
+                    if (k) compareMap.set(k, cRow);
+                });
+
+                const baseCol = config.baseCompareCol;
+                const secCol = config.secondaryCompareCol;
+
+                // 1. Tính toán chênh lệch và sắp xếp lại cột
+                let comparedResults = result.map(row => {
+                    const k = String(row[config.baseKey] || "").trim().toUpperCase();
+                    const match = compareMap.get(k);
+
+                    const vOld = parseFloat(String(row[baseCol] || "0").replace(/,/g, ''));
+                    const vNew = match ? parseFloat(String(match[secCol] || "0").replace(/,/g, '')) : 0;
+                    const diff = vNew - vOld;
+                    const pct = vOld !== 0 ? (diff / vOld) : null;
+
+                    // Tạo row mới với thứ tự cột ưu tiên: Key, Cũ, Mới, Chênh lệch, %, sau đó là các cột khác
+                    const newRow = {};
+                    newRow[config.baseKey] = row[config.baseKey];
+                    newRow[`${baseCol}_Cũ`] = vOld;
+                    newRow[`${baseCol}_Mới`] = vNew;
+                    newRow['Chênh_Lệch'] = diff;
+                    newRow['%_Thay_Đổi'] = pct !== null ? (pct * 100).toFixed(2) + "%" : "N/A";
+                    
+                    // Đổ các cột còn lại từ row gốc vào (loại bỏ cột gốc đã dùng để so sánh để tránh trùng lặp)
+                    for (const key in row) {
+                        if (key !== config.baseKey && key !== baseCol && newRow[key] === undefined) {
+                            newRow[key] = row[key];
+                        }
+                    }
+                    
+                    return newRow;
+                });
+
+                // 2. Lọc theo điều kiện
+                const condType = config.conditionType || 'THRESHOLD_INC';
+                const threshold = parseFloat(config.diffThreshold) || 0;
+                const topX = parseInt(config.topXValue) || 30;
+
+                if (condType === 'THRESHOLD_INC') {
+                    comparedResults = comparedResults.filter(r => r['Chênh_Lệch'] >= threshold);
+                } else if (condType === 'THRESHOLD_DEC') {
+                    comparedResults = comparedResults.filter(r => r['Chênh_Lệch'] <= -threshold);
+                } else if (condType === 'THRESHOLD') {
+                    comparedResults = comparedResults.filter(r => Math.abs(r['Chênh_Lệch']) >= threshold);
+                } else if (condType === 'TOP_X_INC') {
+                    comparedResults.sort((a, b) => b['Chênh_Lệch'] - a['Chênh_Lệch']);
+                    comparedResults = comparedResults.slice(0, topX);
+                } else if (condType === 'TOP_X_DEC') {
+                    comparedResults.sort((a, b) => a['Chênh_Lệch'] - b['Chênh_Lệch']);
+                    comparedResults = comparedResults.slice(0, topX);
+                }
+
+                result = comparedResults;
+            }
         } else if (step.type === 'FORMULA_BUILDER') {
             const newCol = (config.newColName && config.newColName.trim()) ? config.newColName : 'Kết Quả';
             const formula = String(config.formula || '').trim();
@@ -410,6 +527,11 @@ const WORKER_CODE = `
                 const arr = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
                 const buffer = new Uint8Array(arr).buffer;
                 self.postMessage({ type: 'EXPORT_SUCCESS', msgId, buffer }, [buffer]);
+            } else if (e.data.type === 'EXTRACT_SHEET') {
+                // Logic trích xuất sheet từ buffer đã nạp (nếu cần) hoặc data có sẵn
+                // Tuy nhiên trong kiến trúc hiện tại, fullData thường được gửi kèm.
+                // Nếu app-studio gọi extractSheet, ta cần đảm bảo nó trả về đúng format.
+                self.postMessage({ type: 'EXTRACT_SUCCESS', msgId, data: [], headers: [] });
             }
         } catch(err) {
             self.postMessage({ type: 'ERROR', msgId, error: err.toString() });
@@ -447,6 +569,9 @@ class ExcelWorkerAPI {
         } else if (data.type === 'EXPORT_SUCCESS') {
             const cb = this.callbacks.get(data.msgId);
             if (cb) { cb.resolve(data.buffer); this.callbacks.delete(data.msgId); }
+        } else if (data.type === 'EXTRACT_SUCCESS') {
+            const cb = this.callbacks.get(data.msgId);
+            if (cb) { cb.resolve({ data: data.data, headers: data.headers, detectedEncoding: data.detectedEncoding }); this.callbacks.delete(data.msgId); }
         }
     }
 
@@ -490,6 +615,14 @@ class ExcelWorkerAPI {
             const msgId = 'm' + (++this.msgCounter);
             this.callbacks.set(msgId, { resolve: res, reject: rej });
             this.worker.postMessage({ type: 'EXPORT_FINAL', msgId });
+        });
+    }
+
+    async extractSheet(sheetName, headerIdx, autoFix, encoding) {
+        return new Promise((res, rej) => {
+            const msgId = 'm' + (++this.msgCounter);
+            this.callbacks.set(msgId, { resolve: res, reject: rej });
+            this.worker.postMessage({ type: 'EXTRACT_SHEET', msgId, sheetName, headerIdx, autoFix, encoding });
         });
     }
 
