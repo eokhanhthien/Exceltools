@@ -5,8 +5,6 @@ const AppState = {
     rootFileCache: null,    // Cache toàn bộ các Sheet của File Gốc { fileName, workbook, sheetNames, sheetsData }
     rootSelectedSheet: "",  // Tên Sheet đang dùng làm mốc
     rootHeaderRowIndex: 0,  // Dòng bắt đầu làm tiêu đề (0-indexed)
-    rootAutoFixFonts: true, // Tự động sửa lỗi font (TCVN3/VNI) - Mặc định BẬT
-    rootEncodingType: 'AUTO', // Loại bảng mã (TCVN3, VNI, AUTO)
     rootData: [],           // Dữ liệu gốc ở node LOAD
     rootHeaders: [],        // Tiêu đề cột gốc
     steps: [],              // Danh sách các bước
@@ -368,142 +366,122 @@ function getHeadersAtCurrentStep() {
     return targetData.length > 0 ? Object.keys(targetData[0]) : AppState.rootHeaders;
 }
 
-// Khởi tạo global instance cho spreadsheet
-let gridInstance = null;
+// =============================================
+// RENDER DATA TABLE — Giống test.html, không cần thư viện
+// =============================================
 
-// Hiển thị Preview Data tại Step click vào
+// Cache dữ liệu đang hiển thị để search filter hoạt động
+let _currentRenderData = [];
+let _currentHeaders = [];
+
+// Hàm render table (tách riêng để search gọi lại được)
+function _renderTableRows(data, headers) {
+    const tbody = document.getElementById('data-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (!data || data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="${headers.length || 1}" style="text-align:center;padding:40px;color:#9ca3af;">Không có dữ liệu</td></tr>`;
+        return;
+    }
+
+    const isRoot = AppState.activeStepId === 'ROOT';
+    const limit = Math.min(1000, data.length);
+
+    for (let i = 0; i < limit; i++) {
+        const row = data[i];
+        const tr = document.createElement('tr');
+
+        headers.forEach(h => {
+            const td = document.createElement('td');
+            const val = (row[h] !== undefined && row[h] !== null) ? String(row[h]) : '';
+            td.innerText = val;
+
+            // Cho phép edit trực tiếp ở ROOT (giống test.html)
+            if (isRoot) {
+                td.contentEditable = true;
+                td.addEventListener('blur', function () {
+                    row[h] = td.innerText;
+                    // Cập nhật lại fullData trong cache
+                    if (AppState.rootFileCache && AppState.rootSelectedSheet) {
+                        const sd = AppState.rootFileCache.sheetsData[AppState.rootSelectedSheet];
+                        if (sd) {
+                            const idx = AppState.rootData.indexOf(row);
+                            if (idx >= 0 && sd.fullData) sd.fullData[idx] = row;
+                        }
+                    }
+                    setTimeout(() => recalculatePipeline(), 50);
+                });
+            }
+
+            tr.appendChild(td);
+        });
+
+        tbody.appendChild(tr);
+    }
+}
+
+// Khởi tạo search
+function _initTableSearch() {
+    const input = document.getElementById('table-search');
+    if (!input || input.dataset.bound) return;
+    input.dataset.bound = '1';
+    input.addEventListener('input', function () {
+        const kw = this.value.toLowerCase().trim();
+        if (!kw) {
+            _renderTableRows(_currentRenderData, _currentHeaders);
+            return;
+        }
+        const filtered = _currentRenderData.filter(row =>
+            _currentHeaders.some(h => String(row[h] ?? '').toLowerCase().includes(kw))
+        );
+        _renderTableRows(filtered, _currentHeaders);
+    });
+}
+
 function renderPreviewAtActiveStep() {
     const activeData = AppState.cachedResults.get(AppState.activeStepId);
-    
-    let renderData = activeData;
-    if (!renderData || renderData.length === 0) {
-        // Dữ liệu trống
-        renderData = [];
-    }
+    let renderData = (activeData && activeData.length > 0) ? activeData : [];
+    const headers = renderData.length > 0
+        ? Object.keys(renderData[0]).filter(k => k !== '__original_row_idx__')
+        : getHeadersAtCurrentStep().filter(k => k !== '__original_row_idx__');
 
-    const headers = renderData.length > 0 ? Object.keys(renderData[0]) : getHeadersAtCurrentStep();
-    
-    // Build x-spreadsheet data format
-    let limit = Math.min(100, renderData.length); // Hiển thị 100 dòng đầu tiên theo yêu cầu
-    let rowsObj = {};
-    
-    // Header Row (Dòng 0)
-    let maxCols = Math.max(headers.length, 10); 
-    rowsObj[0] = { cells: {} };
-    for(let cIdx = 0; cIdx < headers.length; cIdx++) {
-        rowsObj[0].cells[cIdx] = { text: headers[cIdx], style: 0 };
-    }
+    // Lưu cache để search dùng lại
+    _currentRenderData = renderData;
+    _currentHeaders = headers;
 
-    // Data Rows
-    for (let i = 0; i < limit; i++) {
-        const row = renderData[i];
-        rowsObj[i + 1] = { cells: {} };
-        for(let cIdx = 0; cIdx < headers.length; cIdx++) {
-            const h = headers[cIdx];
-            const val = row[h] !== undefined && row[h] !== null ? String(row[h]) : '';
-            rowsObj[i + 1].cells[cIdx] = { text: val };
-        }
-    }
+    // Reset search input
+    const searchEl = document.getElementById('table-search');
+    if (searchEl) searchEl.value = '';
 
-    const sheetData = {
-        name: AppState.activeStepId === 'ROOT' ? 'Dữ Liệu Gốc' : 'Bảng Preview',
-        rows: rowsObj,
-        styles: [
-            { bgcolor: '#f8f9fa', font: { bold: true }, color: '#5f6368', align: 'center' }
-        ]
-    };
-
-    if (!document.getElementById('x-spreadsheet-container')) return; // Đảm bảo HTML đã load
-
-    if (!gridInstance) {
-        gridInstance = x_spreadsheet('#x-spreadsheet-container', {
-            mode: 'edit',
-            showToolbar: false,
-            showGrid: true,
-            showContextmenu: true,
-            view: {
-                height: () => document.getElementById('x-spreadsheet-wrapper').clientHeight || 500,
-                width: () => document.getElementById('x-spreadsheet-wrapper').clientWidth || 800,
-            }
+    // Build THEAD
+    const thead = document.getElementById('data-thead');
+    if (thead) {
+        thead.innerHTML = '';
+        const tr = document.createElement('tr');
+        headers.forEach(h => {
+            const th = document.createElement('th');
+            th.innerText = h;
+            tr.appendChild(th);
         });
-        
-        // Cấu hình sự kiện Update từ Grid bắn ngược ra Data
-        gridInstance.on('cell-edited', (text, ri, ci) => {
-            if (AppState.activeStepId === 'ROOT') {
-                if (ri === 0) { // Đang sửa tựa đề cột
-                    alert("Tạm thời chưa hỗ trợ đổi Tên Cột gõ trực tiếp. Vui lòng dùng khối [Xào Cột] để Rename!");
-                    gridInstance.loadData(sheetData); // Revert
-                    return; 
-                }
-                if (AppState.rootData.length > 0 && ri > 0) {
-                    const hArray = Object.keys(AppState.rootData[0]);
-                    const key = hArray[ci];
-                    if (key && AppState.rootData[ri - 1]) {
-                        AppState.rootData[ri - 1][key] = text; // Cập nhật raw data
-                        // Trì hoãn 1 chút để Grid render mượt rồi mới recalculate pipeline
-                        setTimeout(() => recalculatePipeline(), 50);
-                    }
-                }
-            } else {
-                alert("❌ BẢO VỆ DỮ LIỆU: Xin lỗi, bạn chỉ được phép SỬA TAY nếu đang đứng ở Thẻ [0. File Data Gốc].\\n\\nỞ các đoạn tiếp theo, dữ liệu đang được Tự Động Tính. Nếu cho sửa sẽ làm trật đường ray luồng dữ liệu của Pipeline!");
-                // Revert
-                gridInstance.loadData(sheetData);
-            }
-        });
-
-        // Lắng nghe window size đổi để vẽ lại Canvas
-        window.addEventListener('resize', () => {
-            // Không làm gì, x-spreadsheet tự kéo theo function view config
-        });
-
-        // === CÔ LẬP CONFIG PANEL KHỎI X-SPREADSHEET ===
-        // Khi user click vào config panel → force x-spreadsheet thoát khỏi cell-edit mode
-        const configPanel = document.getElementById('config-panel');
-        if (configPanel) {
-            configPanel.addEventListener('mousedown', () => {
-                // Blur container của x-spreadsheet để nó thoát cell-edit mode
-                const xsEl = document.querySelector('#x-spreadsheet-container .x-spreadsheet');
-                if (xsEl) xsEl.blur();
-                // Ép Escape để cancel bất kỳ cell đang edit
-                const xsContainer = document.getElementById('x-spreadsheet-container');
-                if (xsContainer) {
-                    xsContainer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: false }));
-                }
-            }, true);
-        }
-
-        // === KEYBOARD GUARD (capture phase) ===
-        // Khi focus đang ở INPUT/TEXTAREA/SELECT bất kỳ → chặn x-spreadsheet nhận keyboard
-        document.addEventListener('keydown', e => {
-            const active = document.activeElement;
-            if (!active) return;
-            const tag = active.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-                e.stopImmediatePropagation();
-            }
-        }, true);
-        document.addEventListener('keyup', e => {
-            const active = document.activeElement;
-            if (!active) return;
-            const tag = active.tagName;
-            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
-                e.stopImmediatePropagation();
-            }
-        }, true);
+        thead.appendChild(tr);
     }
 
-    gridInstance.loadData(sheetData);
-    
-    // Cập nhật text thống kê
-    let displayCountText = `${renderData.length.toLocaleString()} dòng`;
-    if (renderData.length >= 500) {
-        displayCountText += ` (Bản Xem Trước - Tải xuống sẽ FULL data)`;
-    } else {
-        displayCountText += ` (Full)`;
-    }
-    document.getElementById('preview-row-count').innerText = displayCountText;
-    document.getElementById('preview-col-count').innerText = `${headers.length} cột`;
+    // Render rows
+    _renderTableRows(renderData, headers);
+
+    // Gắn search (chỉ lần đầu)
+    _initTableSearch();
+
+    // Cập nhật badges thống kê
+    let displayText = `${renderData.length.toLocaleString()} dòng`;
+    if (renderData.length >= 1000) displayText += ` (xem trước — xuất sẽ FULL)`;
+    const rowCountEl = document.getElementById('preview-row-count');
+    const colCountEl = document.getElementById('preview-col-count');
+    if (rowCountEl) rowCountEl.innerText = displayText;
+    if (colCountEl) colCountEl.innerText = `${headers.length} cột`;
 }
+
 
 // --- CONFIG PANEL RENDERING (Giao diện cấu hình động) ---
 function renderConfigPanel() {
@@ -539,7 +517,6 @@ function renderConfigPanel() {
         }
 
         let rootHeaderRowHtml = '';
-        let rootFontFixHtml = '';
         if (AppState.rootFileCache) {
             rootHeaderRowHtml = `
                 <div class="form-group" style="margin-top: 15px;">
@@ -550,13 +527,11 @@ function renderConfigPanel() {
                     </div>
                 </div>
             `;
-
-            rootFontFixHtml = ''; // Ẩn UI font fix - tự động xử lý ở backend
         }
 
         dynamicPane.innerHTML = `
             <h3 class="config-title">Nguồn Dữ Liệu Gốc</h3>
-            <p class="config-desc">Nạp dữ liệu qua <b>ExcelJS Engine</b>. Tự động nhận diện font TCVN3/VNI dựa trên Cell Style.</p>
+            <p class="config-desc">Nạp dữ liệu qua <b>SheetJS (XLSX.js)</b>. Đọc trực tiếp encoding từ metadata file, không lỗi font.</p>
             <div class="pipeline-dropzone" id="root-dropzone">
                 <div style="font-size: 24px; color: var(--primary);">📥</div>
                 <div style="margin-top: 5px; font-weight: 500;">Bấm tải lên hoặc Kéo File vào đây</div>
@@ -565,28 +540,22 @@ function renderConfigPanel() {
             ${AppState.rootData.length > 0 ? `<p style="margin-top: 15px; color: var(--success); font-weight: bold;">✅ OK: ${AppState.rootData.length.toLocaleString()} dòng</p>` : ''}
             ${rootSheetSelectorHtml}
             ${rootHeaderRowHtml}
-            ${rootFontFixHtml}
         `;
 
-        const triggerReparse = async () => {
-            if (AppState.rootFileCache && AppState.rootFileCache.workerApi) {
+        const triggerReparse = () => {
+            if (AppState.rootFileCache) {
                 const sheetName = AppState.rootSelectedSheet;
-                
-                // Sử dụng lựa chọn của người dùng
-                const result = await AppState.rootFileCache.workerApi.extractSheet(sheetName, AppState.rootHeaderRowIndex, true, AppState.rootEncodingType);
-                
+                const result = extractSheetData(
+                    AppState.rootFileCache.originalBuffer,
+                    sheetName,
+                    AppState.rootHeaderRowIndex
+                );
                 AppState.rootData = result.data;
                 AppState.rootHeaders = result.headers;
-                
-                const infoEl = document.getElementById('encoding-info-text');
-                if (infoEl) {
-                    if (result.detectedEncoding && result.detectedEncoding !== 'NONE') {
-                        infoEl.innerHTML = `🚀 Đã sửa lỗi font: <b>${result.detectedEncoding}</b>`;
-                    } else {
-                        infoEl.innerHTML = "✨ Dữ liệu sạch (Unicode).";
-                    }
+                if (AppState.rootFileCache.sheetsData[sheetName]) {
+                    AppState.rootFileCache.sheetsData[sheetName].fullData = result.fullData;
+                    AppState.rootTotalRows = result.totalRows;
                 }
-                
                 recalculatePipeline();
                 renderPreviewAtActiveStep();
                 renderPipelineSteps();
@@ -594,18 +563,9 @@ function renderConfigPanel() {
         };
 
         if (document.getElementById('root-sheet-select')) {
-            document.getElementById('root-sheet-select').addEventListener('change', async (e) => {
-                const sheetName = e.target.value;
-                AppState.rootSelectedSheet = sheetName;
-                
-                // Trích xuất data từ worker với settings hiện tại
-                const result = await AppState.rootFileCache.workerApi.extractSheet(sheetName, AppState.rootHeaderRowIndex, AppState.rootAutoFixFonts, AppState.rootEncodingType);
-                
-                AppState.rootData = result.data;
-                AppState.rootHeaders = result.headers;
-                
-                recalculatePipeline();
-                renderPreviewAtActiveStep();
+            document.getElementById('root-sheet-select').addEventListener('change', (e) => {
+                AppState.rootSelectedSheet = e.target.value;
+                triggerReparse();
                 renderConfigPanel();
             });
         }
@@ -616,14 +576,6 @@ function renderConfigPanel() {
                 triggerReparse();
             });
         }
-
-        if (document.getElementById('root-encoding-select')) {
-            document.getElementById('root-encoding-select').addEventListener('change', (e) => {
-                AppState.rootEncodingType = e.target.value;
-                triggerReparse();
-            });
-        }
-
 
         // Sự kiện Upload Root
         const dropzone = document.getElementById('root-dropzone');
@@ -640,12 +592,10 @@ function renderConfigPanel() {
                         AppState.rootFileCache.workerApi.terminate();
                     }
 
-                    const result = await readExcelFile(e.target.files[0], 5000);
+                    const result = await readExcelFile(e.target.files[0]);
                     AppState.rootFileCache = result;
                     AppState.rootSelectedSheet = result.sheetNames[0];
                     AppState.rootHeaderRowIndex = 0;
-                    AppState.rootAutoFixFonts = true;
-                    AppState.rootEncodingType = 'AUTO';
                     
                     // Lấy data từ sheet đầu tiên
                     const sheetData = result.sheetsData[AppState.rootSelectedSheet];
@@ -1409,6 +1359,7 @@ function renderConfigPanel() {
                 { n: 'ISNUMBER', tpl: 'ISNUMBER(COT)',        d: 'Kiểm tra số' },
             ]},
             { cat: '📅 Ngày Tháng', color: '#0891b2', fns: [
+                { n: 'DATECONVERTPRO', tpl: 'DATECONVERTPRO(COT, "dd*mm*yyyy", "dd/mm/yyyy")', d: 'Chuyển định dạng thông minh — * khớp mọi ký tự phân cách (-, /, _, .). Trả "Error" nếu ngày tháng sai.' },
                 { n: 'DATECONVERT',tpl: 'DATECONVERT(COT, "dd/mm/yyyy", "mm-dd-yyyy")', d: 'Chuyển định dạng chủ động (Gốc → Mới)' },
                 { n: 'DATEFORMAT', tpl: 'DATEFORMAT(COT, "dd-MM-yyyy")', d: 'Đổi định dạng (Máy tự đoán ngày gốc)' },
                 { n: 'DATEDIF',    tpl: 'DATEDIF(C1, C2, "D")',             d: 'Khoảng cách ngày' },
@@ -1528,6 +1479,46 @@ function renderConfigPanel() {
                     VND:n=>parseFloat(n||0).toLocaleString('vi-VN',{style:'currency',currency:'VND'}),
                     TODAY:()=>_df(new Date(),'dd/MM/yyyy'), DATEFORMAT:(v,fmt)=>_df(v,fmt),
                     DATECONVERT:(s,sf,df)=>_df(_parseFmt(s,sf), df),
+                    // DATECONVERTPRO preview
+                    DATECONVERTPRO: (s, srcFmt, destFmt) => {
+                        if (s === null || s === undefined || String(s).trim() === '') return 'Error';
+                        // _parseFmtPro inline cho preview
+                        const cleanS = String(s).trim();
+                        const numVal = parseFloat(cleanS.replace(/,/g, ''));
+                        let _d, _m, _y;
+                        if (!isNaN(numVal) && numVal > 10000 && numVal < 80000 && !(/[\/\-\._ ]/.test(cleanS))) {
+                            const dt2 = new Date(Math.round((numVal - 25569) * 86400 * 1000));
+                            if (isNaN(dt2.getTime())) return 'Error';
+                            _d = dt2.getDate(); _m = dt2.getMonth() + 1; _y = dt2.getFullYear();
+                        } else {
+                            const sParts = cleanS.split(/[\s\/\-\._]+/).filter(x => x !== '');
+                            const normFmt = srcFmt.replace(/\*/g, '|SEP|');
+                            const fParts = normFmt.toLowerCase().split(/[\s\/\-\._|]+/).filter(x => x !== '' && x !== 'sep');
+                            if (sParts.length < 3 || fParts.length < 3) return 'Error';
+                            for (let i = 0; i < fParts.length; i++) {
+                                const part = fParts[i], val = parseInt(sParts[i]);
+                                if (isNaN(val)) return 'Error';
+                                if (part.includes('d')) _d = val;
+                                else if (part.includes('m')) _m = val;
+                                else if (part.includes('y')) { _y = val; if (_y < 100) _y += (_y > 50 ? 1900 : 2000); }
+                            }
+                            if (_d === undefined || _m === undefined || _y === undefined) return 'Error';
+                            if (_m < 1 || _m > 12) return 'Error';
+                            if (_d < 1 || _d > 31) return 'Error';
+                            const dim = new Date(_y, _m, 0).getDate();
+                            if (_d > dim) return 'Error';
+                            if (_y < 1900 || _y > 9999) return 'Error';
+                            const dtCheck = new Date(_y, _m - 1, _d);
+                            if (isNaN(dtCheck.getTime()) || dtCheck.getDate() !== _d || dtCheck.getMonth() + 1 !== _m) return 'Error';
+                        }
+                        return destFmt
+                            .replace(/yyyy/gi, String(_y))
+                            .replace(/yy/gi, String(_y).slice(-2))
+                            .replace(/mm/gi, String(_m).padStart(2,'0'))
+                            .replace(/(?<![m])m(?![m])/gi, String(_m))
+                            .replace(/dd/gi, String(_d).padStart(2,'0'))
+                            .replace(/(?<![d])d(?![d])/gi, String(_d));
+                    },
                     SUM:(...a)=>a.flat().reduce((s,x)=>s+(parseFloat(x)||0),0),
                     MAX:(...a)=>Math.max(...a.flat().map(x=>parseFloat(x)||0)), MIN:(...a)=>Math.min(...a.flat().map(x=>parseFloat(x)||0)),
                     ISBLANK:(v)=>v===null||v===undefined||v==='', ISNUMBER:(v)=>!isNaN(parseFloat(v))&&v!==null, TRUE:true, FALSE:false,
@@ -1817,9 +1808,208 @@ document.getElementById('btn-export-final').addEventListener('click', () => {
             document.getElementById('global-loading-text').innerText = "Đang tính toán toàn bộ pipeline trong Worker...";
             const pipelineResult = await workerApi.runPipeline(AppState.steps, fullData);
 
-            // 2. Yêu cầu Worker tạo File Excel từ kết quả đã tính
-            document.getElementById('global-loading-text').innerText = "Đang tạo file Excel...";
-            const buffer = await workerApi.exportFinal();
+            // 2. Yêu cầu Worker tạo File Excel hoặc ghép vào File gốc
+            document.getElementById('global-loading-text').innerText = "Đang chuẩn bị xuất file...";
+            
+            let buffer;
+            if (AppState.rootFileCache && AppState.rootFileCache.originalBuffer) {
+                try {
+                    // Lấy toàn bộ dữ liệu đã được xử lý từ Worker
+                    document.getElementById('global-loading-text').innerText = "Đang tải dữ liệu kết quả từ Worker...";
+                    const processedData = await workerApi.getProcessedData();
+
+                    document.getElementById('global-loading-text').innerText = "Đang ghép các cột mới vào File Excel gốc...";
+                    // Khởi tạo ExcelJS Workbook từ buffer gốc để bảo toàn định dạng và font
+                    const workbook = new ExcelJS.Workbook();
+                    await workbook.xlsx.load(AppState.rootFileCache.originalBuffer);
+                    
+                    const worksheet = workbook.getWorksheet(currentSheet);
+                    
+                    if (worksheet) {
+                        const headerMap = {};
+                        const originalHeaders = [];
+
+                        // Đọc và map Header hiện có của worksheet
+                        const headerRow = worksheet.getRow(1);
+                        headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                            let hName = String(cell.value || '').trim();
+                            if (hName) {
+                                const encoding = AppState.rootFileCache.sheetsData[currentSheet]?.detectedEncoding;
+                                if (encoding && encoding !== 'NONE') {
+                                    hName = VietEncoder.fix(hName, encoding);
+                                }
+                                headerMap[hName] = colNumber;
+                                originalHeaders.push(hName);
+                            }
+                        });
+
+                        // Xác định xem có phải là Group By hay so sánh mà làm thay đổi cấu trúc hoàn toàn không
+                        const hasOriginalIndices = processedData.some(r => r.__original_row_idx__ !== undefined);
+
+                        // Kiểm tra xem thứ tự dòng có bị đảo lộn (sắp xếp) không
+                        let isOrderSame = true;
+                        if (hasOriginalIndices) {
+                            let lastIdx = 1;
+                            for (const row of processedData) {
+                                if (row.__original_row_idx__ !== undefined) {
+                                    if (row.__original_row_idx__ < lastIdx) {
+                                        isOrderSame = false;
+                                        break;
+                                    }
+                                    lastIdx = row.__original_row_idx__;
+                                }
+                            }
+                        }
+
+                        if (!hasOriginalIndices || !isOrderSame) {
+                            // Nếu là GROUP_BY hoặc có SORT làm đảo lộn dòng, xóa toàn bộ dòng và ghi mới hoàn toàn
+                            const totalRows = worksheet.rowCount;
+                            if (totalRows >= 2) {
+                                worksheet.spliceRows(2, totalRows - 1);
+                            }
+                            // Rebuild từ đầu
+                            const processedHeaders = Object.keys(processedData[0] || {}).filter(h => h !== '__original_row_idx__');
+                            headerRow.values = processedHeaders;
+                            
+                            // Khử lỗi font legacy tiếng Việt cho header row
+                            headerRow.eachCell((cell, colNumber) => {
+                                const currentFont = cell.font || (worksheet.getColumn(colNumber).font) || {};
+                                const fName = String(currentFont.name || '').toLowerCase();
+                                if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
+                                    cell.font = { ...currentFont, name: 'Calibri' };
+                                }
+                            });
+
+                            processedData.forEach((procRow, idx) => {
+                                const wsRow = worksheet.getRow(idx + 2);
+                                processedHeaders.forEach((h, colIdx) => {
+                                    const cell = wsRow.getCell(colIdx + 1);
+                                    cell.value = procRow[h];
+                                    
+                                    const currentFont = cell.font || (worksheet.getColumn(colIdx + 1).font) || {};
+                                    const fName = String(currentFont.name || '').toLowerCase();
+                                    if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
+                                        cell.font = { ...currentFont, name: 'Calibri' };
+                                    }
+                                });
+                            });
+                        } else {
+                            // TRƯỜNG HỢP LÝ TƯỞNG: Thứ tự dòng giữ nguyên (chỉ LỌC hoặc thêm cột CÔNG THỨC/VLOOKUP)
+                            
+                            // 1. Tìm các cột mới sinh ra từ pipeline để chèn tiếp vào cuối
+                            const processedHeaders = Object.keys(processedData[0] || {});
+                            const newColumns = processedHeaders.filter(h => h !== '__original_row_idx__' && !headerMap[h]);
+
+                            // Điền thêm header cho các cột mới
+                            let nextColIndex = originalHeaders.length + 1;
+                            newColumns.forEach(newCol => {
+                                headerMap[newCol] = nextColIndex;
+                                const cell = headerRow.getCell(nextColIndex);
+                                cell.value = newCol;
+                                
+                                // Sao chép style từ ô header cuối cùng để đồng nhất giao diện, xóa font legacy tiếng Việt
+                                const lastHeaderCell = headerRow.getCell(originalHeaders.length);
+                                if (lastHeaderCell && lastHeaderCell.style) {
+                                    const newStyle = JSON.parse(JSON.stringify(lastHeaderCell.style));
+                                    const currentFont = newStyle.font || (worksheet.getColumn(nextColIndex).font) || {};
+                                    const fName = String(currentFont.name || '').toLowerCase();
+                                    if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
+                                        newStyle.font = { ...currentFont, name: 'Calibri' };
+                                    }
+                                    cell.style = newStyle;
+                                }
+                                nextColIndex++;
+                            });
+
+                            // Khử lỗi font cho các cột header cũ (nếu có dùng TCVN3/VNI)
+                            headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                                if (colNumber <= originalHeaders.length) {
+                                    const origHeader = originalHeaders[colNumber - 1];
+                                    const unicodeHeader = AppState.rootHeaders[colNumber - 1] || origHeader;
+                                    cell.value = unicodeHeader;
+                                }
+                                
+                                const currentFont = cell.font || (worksheet.getColumn(colNumber).font) || {};
+                                const fName = String(currentFont.name || '').toLowerCase();
+                                if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
+                                    cell.font = { ...currentFont, name: 'Calibri' };
+                                }
+                            });
+
+                            // 2. Ghi đè Unicode cho toàn bộ các ô cũ/mới và khử sạch font legacy tiếng Việt
+                            processedData.forEach((procRow) => {
+                                const origRowIdx = procRow.__original_row_idx__;
+                                const wsRow = worksheet.getRow(origRowIdx);
+                                
+                                processedHeaders.forEach(colName => {
+                                    const colNumber = headerMap[colName];
+                                    if (colNumber) {
+                                        const cell = wsRow.getCell(colNumber);
+                                        
+                                        if (newColumns.includes(colName)) {
+                                            // Cột mới: ghi giá trị
+                                            cell.value = procRow[colName];
+                                            
+                                            // Sao chép định dạng của ô bên trái để đồng nhất style, nhưng xóa font legacy tiếng Việt
+                                            if (colNumber > 1) {
+                                                const leftCell = wsRow.getCell(colNumber - 1);
+                                                if (leftCell && leftCell.style) {
+                                                    const newStyle = JSON.parse(JSON.stringify(leftCell.style));
+                                                    const currentFont = newStyle.font || (worksheet.getColumn(colNumber).font) || {};
+                                                    const fName = String(currentFont.name || '').toLowerCase();
+                                                    if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
+                                                        newStyle.font = { ...currentFont, name: 'Calibri' };
+                                                    }
+                                                    cell.style = newStyle;
+                                                }
+                                            }
+                                        } else {
+                                            // Cột cũ: ghi đè giá trị Unicode sạch và khử font legacy
+                                            cell.value = procRow[colName];
+                                            
+                                            const currentFont = cell.font || (worksheet.getColumn(colNumber).font) || {};
+                                            const fName = String(currentFont.name || '').toLowerCase();
+                                            if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
+                                                cell.font = { ...currentFont, name: 'Calibri' };
+                                            }
+                                        }
+                                    }
+                                });
+                                
+                                // Xóa dữ liệu các cột cũ nếu đã bị drop trong pipeline
+                                originalHeaders.forEach(origHName => {
+                                    if (!processedHeaders.includes(origHName) && headerMap[origHName]) {
+                                        const colNum = headerMap[origHName];
+                                        const cell = wsRow.getCell(colNum);
+                                        cell.value = null; // Clear content of dropped column
+                                        const currentFont = cell.font || (worksheet.getColumn(colNum).font) || {};
+                                        const fName = String(currentFont.name || '').toLowerCase();
+                                        if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
+                                            cell.font = { ...currentFont, name: 'Calibri' };
+                                        }
+                                    }
+                                });
+                            });
+
+                            // 3. Xóa các dòng bị lọc từ dưới lên trên để không làm lệch chỉ mục vật lý
+                            const activeIndices = new Set(processedData.map(r => r.__original_row_idx__).filter(Boolean));
+                            for (let r = worksheet.rowCount; r >= 2; r--) {
+                                if (!activeIndices.has(r)) {
+                                    worksheet.spliceRows(r, 1);
+                                }
+                            }
+                        }
+                    }
+                    
+                    const arrBuffer = await workbook.xlsx.writeBuffer();
+                    buffer = arrBuffer;
+                } catch (mergeErr) {
+                    console.warn("Main thread merge failed, falling back to clean worker export:", mergeErr);
+                    buffer = await workerApi.exportFinal();
+                }
+            } else {
+                buffer = await workerApi.exportFinal();
+            }
 
             if (!buffer || buffer.byteLength === 0) throw new Error("File tạo ra bị trống. Vui lòng thử lại.");
 

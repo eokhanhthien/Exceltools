@@ -4,27 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DataX Pipeline Studio</title>
-    <!-- Thêm font chuyên nghiệp -->
-    <!-- Thư viện x-data-spreadsheet (Local) -->
-    <link rel="stylesheet" href="xspreadsheet.css">
-    <script src="xspreadsheet.js"></script>
+
+    <!-- SheetJS từ CDN — giống test.html, không lỗi font -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
     <link rel="stylesheet" href="style.css">
-    <script src="babel-polyfill.min.js"></script>
-    <script src="exceljs.min.js"></script>
-    <script src="xlsx.full.min.js"></script>
-    <script src="viet-encoder.js"></script>
     <script src="pipeline-engine.js" defer></script>
     <script src="app-studio.js" defer></script>
 </head>
 <body class="light-theme">
-    <!-- Overlay Loading Thông báo chung -->
+    <!-- Overlay Loading -->
     <div id="global-loading" class="global-loading hidden">
         <div class="spinner-xl"></div>
         <p id="global-loading-text">Đang xử lý...</p>
     </div>
 
-    <!-- Header bar kiểu ứng dụng Desktop -->
+    <!-- Header -->
     <header class="app-header">
         <div class="brand">
             <div class="logo"></div>
@@ -39,7 +34,7 @@
     </header>
 
     <div class="app-container">
-        <!-- CỘT TRÁI: DANH SÁCH BƯỚC -->
+        <!-- CỘT TRÁI: PIPELINE STEPS -->
         <aside class="sidebar sidebar-left recipe-panel">
             <div class="recipe-header" style="justify-content: space-between; display: flex; align-items: center;">
                 <h3>Luồng Kịch Bản (Pipeline)</h3>
@@ -56,7 +51,7 @@
                     <input type="file" id="preset-file-input" accept=".json" hidden>
                 </div>
             </div>
-            
+
             <div class="pipeline-steps-wrapper">
                 <div class="add-step-wrapper">
                     <button class="btn btn-add w-full text-left" id="btn-add-step">+ Thêm Công Đoạn</button>
@@ -72,12 +67,12 @@
                     </div>
                 </div>
                 <div class="pipeline-steps" id="pipeline-steps">
-                    <!-- Javascript sẽ render vào đây -->
+                    <!-- JS render vào đây -->
                 </div>
             </div>
         </aside>
 
-        <!-- CENTER: SPREADSHEET MAIN DATA -->
+        <!-- CENTER: DATA TABLE (giống test.html) -->
         <main class="main-workspace spreadsheet-panel">
             <div class="table-toolbar">
                 <div class="toolbar-left">
@@ -88,15 +83,21 @@
                         <div id="preview-mini-loading" class="mini-spinner hidden"></div>
                     </div>
                 </div>
+                <div class="toolbar-right">
+                    <input type="text" id="table-search" placeholder="🔍 Tìm kiếm..." style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;outline:none;width:220px;">
+                </div>
             </div>
-            <div class="table-wrapper" style="padding: 0; display:flex; flex-direction:column; overflow:hidden;" id="x-spreadsheet-wrapper">
-                <!-- x-data-spreadsheet will render here -->
-                <div id="x-spreadsheet-container" style="flex:1;"></div>
+            <!-- HTML table thuần — không cần thư viện, không lỗi font -->
+            <div class="table-wrapper" id="data-table-wrapper">
+                <table id="data-table">
+                    <thead id="data-thead"></thead>
+                    <tbody id="data-tbody"></tbody>
+                </table>
             </div>
         </main>
     </div>
 
-    <!-- CONFIG PANEL: nằm ngoài app-container, là overlay độc lập trên body -->
+    <!-- CONFIG PANEL (overlay) -->
     <aside class="sidebar-right config-panel" id="config-panel">
         <div class="config-header">
             <h3>Bảng Thuộc Tính (Properties)</h3>
@@ -109,7 +110,6 @@
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2" style="margin-bottom: 12px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 <p>Chọn một block Công Đoạn ở lề trái<br>để điều chỉnh tuỳ chọn tại đây.</p>
             </div>
-            <!-- Vùng chứa form cấu hình động do JS render -->
             <div id="config-dynamic" class="hidden"></div>
         </div>
     </aside>

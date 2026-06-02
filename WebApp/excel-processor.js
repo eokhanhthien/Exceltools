@@ -18,7 +18,8 @@ async function readWorkbook(file) {
         reader.onload = (e) => {
             try {
                 const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
+                // Cần thêm codepage: 65001 để fix lỗi font UTF-8 khi đọc CSV và dense để giảm RAM
+                const workbook = XLSX.read(data, { type: 'array', codepage: 65001, dense: true });
                 resolve(workbook);
             } catch (err) {
                 reject(err);

@@ -136,6 +136,9 @@ function applyStepToData(sourceData, step) {
             if (config.columns && config.columns.length > 0) {
                 result = result.map(row => {
                     const newRow = {};
+                    if (row.__original_row_idx__ !== undefined) {
+                        newRow.__original_row_idx__ = row.__original_row_idx__;
+                    }
                     config.columns.forEach(c => {
                         const val = row[c.oldName];
                         newRow[c.newName || c.oldName] = (val === undefined || val === null) ? "" : val;
@@ -277,6 +280,82 @@ function applyStepToData(sourceData, step) {
                     return (isNaN(dt.getTime()) || dt.getDate() !== _d1) ? null : dt;
                 };
 
+                // ====== DATECONVERTPRO helper ======
+                // Dùng * trong fmt để match BẤT KỲ ký tự ngăn cách (/, -, ., _, khoảng trắng...)
+                // Trả về { d, m, y } hoặc null nếu không parse được / sai logic
+                const _parseFmtPro = (s, fmt) => {
+                    if (s === null || s === undefined) return null;
+                    if (s instanceof Date) {
+                        if (isNaN(s.getTime())) return null;
+                        return { d: s.getDate(), m: s.getMonth() + 1, y: s.getFullYear() };
+                    }
+                    const cleanS = String(s).trim();
+                    if (!cleanS) return null;
+
+                    // Xử lý Excel serial number (số nguyên không có ký tự ngăn cách)
+                    const numVal = parseFloat(cleanS.replace(/,/g, ''));
+                    if (!isNaN(numVal) && numVal > 10000 && numVal < 80000 && !/[\/\-\._ ]/.test(cleanS)) {
+                        const dt = new Date(Math.round((numVal - 25569) * 86400 * 1000));
+                        return isNaN(dt.getTime()) ? null : { d: dt.getDate(), m: dt.getMonth() + 1, y: dt.getFullYear() };
+                    }
+
+                    // Tách các phần của chuỗi giá trị theo bất kỳ ký tự ngăn cách nào
+                    const sParts = cleanS.split(/[\s\/\-\._ ]+/).filter(x => x !== '');
+
+                    // Chuẩn hóa fmt: thay * bằng placeholder rồi tách theo separator thực
+                    // Nếu fmt chứa *, ta dùng nó như một wildcard separator
+                    const normalizedFmt = fmt.replace(/\*/g, '|SEP|');
+                    const fParts = normalizedFmt.toLowerCase().split(/[\s\/\-\._ |]+/).filter(x => x !== '' && x !== 'sep');
+
+                    if (sParts.length < 3 || fParts.length < 3) return null;
+
+                    let _d, _m, _y;
+                    for (let i = 0; i < fParts.length; i++) {
+                        const part = fParts[i];
+                        const val = parseInt(sParts[i]);
+                        if (isNaN(val)) return null;
+                        if (part.includes('d')) _d = val;
+                        else if (part.includes('m')) _m = val;
+                        else if (part.includes('y')) {
+                            _y = val;
+                            if (_y < 100) _y += (_y > 50 ? 1900 : 2000);
+                        }
+                    }
+
+                    if (_d === undefined || _m === undefined || _y === undefined) return null;
+
+                    // === KIỂM TRA LOGIC NGÀY THÁNG ===
+                    // 1. Tháng phải từ 1-12
+                    if (_m < 1 || _m > 12) return null;
+                    // 2. Ngày phải hợp lệ trong tháng (xét năm nhuận)
+                    if (_d < 1 || _d > 31) return null;
+                    const daysInMonth = new Date(_y, _m, 0).getDate();
+                    if (_d > daysInMonth) return null;
+                    // 3. Năm phải hợp lý
+                    if (_y < 1900 || _y > 9999) return null;
+
+                    // 4. Cross-check: tạo Date object và xác nhận không bị JavaScript auto-correct
+                    const dt = new Date(_y, _m - 1, _d);
+                    if (isNaN(dt.getTime())) return null;
+                    // Nếu JS tự điều chỉnh ngày -> sai
+                    if (dt.getDate() !== _d || dt.getMonth() + 1 !== _m || dt.getFullYear() !== _y) return null;
+
+                    return { d: _d, m: _m, y: _y };
+                };
+
+                // Định dạng output từ { d, m, y } theo destFmt
+                const _formatDMY = (dmy, destFmt) => {
+                    if (!dmy) return 'Error';
+                    const { d, m, y } = dmy;
+                    return destFmt
+                        .replace(/yyyy/gi, String(y))
+                        .replace(/yy/gi, String(y).slice(-2))
+                        .replace(/mm/gi, String(m).padStart(2, '0'))
+                        .replace(/(?<![m])m(?![m])/gi, String(m))
+                        .replace(/dd/gi, String(d).padStart(2, '0'))
+                        .replace(/(?<![d])d(?![d])/gi, String(d));
+                };
+
                 const _pd = v => {
                     if (!v && v !== 0) return null;
                     if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
@@ -409,6 +488,15 @@ function applyStepToData(sourceData, step) {
                     DATEFORMAT: (v,fmt)=>_df(v,fmt),
                     DATEPARSE: (s,fmt)=>_parseFmt(s,fmt),
                     DATECONVERT: (s,srcFmt,destFmt)=>_df(_parseFmt(s,srcFmt), destFmt),
+                    // DATECONVERTPRO: Chuyển định dạng thông minh
+                    // * trong fmt = bất kỳ ký tự ngăn cách
+                    // Kiểm tra tính hợp lệ chặt chẽ, trả "Error" nếu sai
+                    DATECONVERTPRO: (s, srcFmt, destFmt) => {
+                        if (s === null || s === undefined || String(s).trim() === '') return 'Error';
+                        const dmy = _parseFmtPro(s, srcFmt);
+                        if (!dmy) return 'Error';
+                        return _formatDMY(dmy, destFmt);
+                    },
                     DATEVALUE: s=>{ const d=_pd(s); return d?`${_pad(d.getDate())}/${_pad(d.getMonth()+1)}/${d.getFullYear()}`:''; },
                     DATE: (y,m,d)=>{ const dt=new Date(y,m-1,d); return `${_pad(dt.getDate())}/${_pad(dt.getMonth()+1)}/${dt.getFullYear()}`; },
                     DAYS: (e,s)=>{ const de=_pd(e),ds=_pd(s); return (de&&ds)?Math.round((de-ds)/86400000):0; },
@@ -512,7 +600,13 @@ const WORKER_CODE = `
             } else if (e.data.type === 'EXPORT_FINAL') {
                 // DÙNG XLSX (SheetJS) để tạo file - KHÔNG dùng ExcelJS vì không load được ổn định trong blob Worker
                 if (!self.processedData || self.processedData.length === 0) throw new Error('Không có dữ liệu để xuất.');
-                const headers = Object.keys(self.processedData[0]);
+                const headerSet = new Set();
+                self.processedData.forEach(row => {
+                    Object.keys(row).forEach(k => {
+                        if (k !== '__original_row_idx__') headerSet.add(k);
+                    });
+                });
+                const headers = Array.from(headerSet);
                 const rows = [headers];
                 for (let i = 0; i < self.processedData.length; i++) {
                     rows.push(headers.map(h => {
@@ -527,6 +621,8 @@ const WORKER_CODE = `
                 const arr = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
                 const buffer = new Uint8Array(arr).buffer;
                 self.postMessage({ type: 'EXPORT_SUCCESS', msgId, buffer }, [buffer]);
+            } else if (e.data.type === 'GET_PROCESSED_DATA') {
+                self.postMessage({ type: 'GET_PROCESSED_DATA_SUCCESS', msgId, processedData: self.processedData });
             } else if (e.data.type === 'EXTRACT_SHEET') {
                 // Logic trích xuất sheet từ buffer đã nạp (nếu cần) hoặc data có sẵn
                 // Tuy nhiên trong kiến trúc hiện tại, fullData thường được gửi kèm.
@@ -569,9 +665,9 @@ class ExcelWorkerAPI {
         } else if (data.type === 'EXPORT_SUCCESS') {
             const cb = this.callbacks.get(data.msgId);
             if (cb) { cb.resolve(data.buffer); this.callbacks.delete(data.msgId); }
-        } else if (data.type === 'EXTRACT_SUCCESS') {
+        } else if (data.type === 'GET_PROCESSED_DATA_SUCCESS') {
             const cb = this.callbacks.get(data.msgId);
-            if (cb) { cb.resolve({ data: data.data, headers: data.headers, detectedEncoding: data.detectedEncoding }); this.callbacks.delete(data.msgId); }
+            if (cb) { cb.resolve(data.processedData); this.callbacks.delete(data.msgId); }
         }
     }
 
@@ -586,24 +682,10 @@ class ExcelWorkerAPI {
         return new Promise((res, rej) => {
             const msgId = 'm' + (++this.msgCounter);
             this.callbacks.set(msgId, { resolve: res, reject: rej });
-            // Làm sạch data trước khi gửi để tránh DataCloneError từ ExcelJS objects
             try {
-                const safeData = (fullData || []).map(row => {
-                    const nr = {};
-                    for (const k in row) {
-                        let v = row[k];
-                        if (v && typeof v === 'object' && !(v instanceof Date)) {
-                            if (v.result !== undefined) v = v.result;
-                            else if (Array.isArray(v.richText)) v = v.richText.map(r => r.text || '').join('');
-                            else if (v.text !== undefined) v = v.text;
-                            else v = String(v);
-                        }
-                        nr[k] = v;
-                    }
-                    return nr;
-                });
+                // SheetJS trả về dữ liệu plain JS thuần, không cần sanitize ExcelJS objects
                 const safeSteps = JSON.parse(JSON.stringify(steps));
-                this.worker.postMessage({ type: 'APPLY_PIPELINE', msgId, steps: safeSteps, fullData: safeData });
+                this.worker.postMessage({ type: 'APPLY_PIPELINE', msgId, steps: safeSteps, fullData: fullData || [] });
             } catch (e) {
                 rej(new Error("Lỗi chuẩn hóa dữ liệu: " + e.message));
             }
@@ -618,120 +700,116 @@ class ExcelWorkerAPI {
         });
     }
 
-    async extractSheet(sheetName, headerIdx, autoFix, encoding) {
+    async getProcessedData() {
         return new Promise((res, rej) => {
             const msgId = 'm' + (++this.msgCounter);
             this.callbacks.set(msgId, { resolve: res, reject: rej });
-            this.worker.postMessage({ type: 'EXTRACT_SHEET', msgId, sheetName, headerIdx, autoFix, encoding });
+            this.worker.postMessage({ type: 'GET_PROCESSED_DATA', msgId });
         });
+    }
+
+    async extractSheet(sheetName, headerIdx) {
+        const buffer = (window.AppState && window.AppState.rootFileCache)
+            ? window.AppState.rootFileCache.originalBuffer
+            : null;
+        if (!buffer) return { data: [], headers: [], totalRows: 0 };
+        return extractSheetData(buffer, sheetName, headerIdx);
     }
 
     terminate() { if (this.worker) this.worker.terminate(); }
 }
 
-async function readExcelFile(file, limit = 2000) {
-    const buffer = await file.arrayBuffer();
-    let data = [];
-    let headers = [];
-    let sheetNames = [];
-    let mainSheetName = "";
-
+// ==========================================
+// Đọc một Sheet từ buffer đã có, với tuỳ chọn header row
+// (dùng khi người dùng đổi Sheet hoặc đổi Header Row Index)
+// ==========================================
+function extractSheetData(buffer, sheetName, headerIdx = 0) {
     try {
-        // Dùng ExcelJS để đọc - tốt hơn cho font và cấu trúc file
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.load(buffer);
-        const worksheet = workbook.worksheets[0];
-        if (worksheet) {
-            mainSheetName = worksheet.name;
-            sheetNames = workbook.worksheets.map(w => w.name);
-            worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
-                if (rowNumber === 1) {
-                    headers = row.values.slice(1).map((h, i) => {
-                        // Làm sạch tiêu đề cột (tránh hiển thị [object Object])
-                        return String(_sanitizeCellVal(h) || '').trim() || 'Col' + (i + 1);
-                    });
-                } else {
-                    const rowObj = {};
-                    row.values.slice(1).forEach((val, i) => {
-                        rowObj[headers[i]] = _sanitizeCellVal(val);
-                    });
-                    if (Object.values(rowObj).some(v => v !== '')) data.push(rowObj);
-                }
-            });
-        }
-    } catch (e) { console.warn("ExcelJS failed, falling back to XLSX:", e); }
+        const data8 = new Uint8Array(buffer);
+        const wb = XLSX.read(data8, { type: 'array' });
+        const ws = wb.Sheets[sheetName];
+        if (!ws) return { data: [], headers: [], fullData: [], totalRows: 0 };
 
-    // Fallback sang XLSX (SheetJS) nếu ExcelJS thất bại
-    if (data.length === 0) {
-        const wb = XLSX.read(buffer, { type: 'array' });
-        sheetNames = wb.SheetNames;
-        mainSheetName = sheetNames[0];
-        const ws = wb.Sheets[mainSheetName];
+        // Đọc dạng mảng 2 chiều để hỗ trợ chọn dòng header
         const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        if (raw.length > 0) {
-            headers = raw[0].map((h, i) => String(h || '').trim() || 'Col' + (i + 1));
-            for (let i = 1; i < raw.length; i++) {
-                const rowObj = {};
-                headers.forEach((h, idx) => { rowObj[h] = (raw[i][idx] === null || raw[i][idx] === undefined) ? '' : raw[i][idx]; });
-                if (Object.values(rowObj).some(v => v !== '')) data.push(rowObj);
+        if (raw.length <= headerIdx) return { data: [], headers: [], fullData: [], totalRows: 0 };
+
+        const headers = raw[headerIdx].map((h, i) => String(h || '').trim() || 'Col' + (i + 1));
+        const rows = [];
+        for (let i = headerIdx + 1; i < raw.length; i++) {
+            const rowObj = {};
+            headers.forEach((h, idx) => { rowObj[h] = (raw[i][idx] === null || raw[i][idx] === undefined) ? '' : raw[i][idx]; });
+            if (Object.values(rowObj).some(v => v !== '')) {
+                rowObj.__original_row_idx__ = i + 1;
+                rows.push(rowObj);
             }
         }
+        return { headers, data: rows, fullData: rows, totalRows: rows.length };
+    } catch (e) {
+        console.error('extractSheetData error:', e);
+        return { data: [], headers: [], fullData: [], totalRows: 0 };
     }
+}
 
-    // Sửa font tiếng Việt
-    let finalData = data;
-    let detected = 'NONE';
-    if (typeof VietEncoder !== 'undefined') {
-        // BƯỚC 1: Detect từ DATA (ưu tiên cao nhất, ít false positive)
-        detected = VietEncoder.detect(data.slice(0, 500));
+// ==========================================
+// Đọc file Excel từ File object (FileReader + Uint8Array + XLSX)
+// Giống hệt pattern của test.html — không lỗi font, không cần ExcelJS
+// ==========================================
+async function readExcelFile(file, limit = 5000) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
 
-        // BƯỚC 2: Nếu data không detect được, kiểm tra CRM_BUG từ headers
-        // CHỈ check CRM_BUG (regex đặc thù) - KHÔNG dùng headerFakeRow cho TCVN3/VNI
-        // vì TCVN3/VNI regex có thể match nhầm với Unicode tiếng Việt chuẩn (gây "Số"→"Sộ")
-        if (detected === 'NONE') {
-            const headerStr = headers.join(' ');
-            const dataStr = JSON.stringify(data.slice(0, 100));
-            const combined = headerStr + ' ' + dataStr;
-            if (/NguyỦn|Thỹ|VĒn|TĒng|HỜng|Nguyỡt|TrĒm|NGìY|LỢc|TưỸng|QuỘc|HỒ TàN|SỘ|sỘ|Ęiỡn|ĘỢng|Đỹa|chỰ|Ę/.test(combined)) {
-                detected = 'CRM_BUG';
+        reader.onerror = () => reject(new Error('Không đọc được file.'));
+
+        reader.onload = function (evt) {
+            try {
+                const arrayBuf = evt.target.result;
+                const data = new Uint8Array(arrayBuf);
+
+                // Đọc workbook — SheetJS tự xử lý encoding từ metadata file
+                const wb = XLSX.read(data, { type: 'array' });
+                const sheetNames = wb.SheetNames;
+                const sheetsData = {};
+
+                sheetNames.forEach(name => {
+                    const ws = wb.Sheets[name];
+                    const json = XLSX.utils.sheet_to_json(ws, { defval: '' });
+                    // Đánh số dòng gốc (bắt đầu từ dòng 2 vì dòng 1 là header)
+                    json.forEach((row, i) => { row.__original_row_idx__ = i + 2; });
+                    const headers = Object.keys(json[0] || {}).filter(k => k !== '__original_row_idx__');
+
+                    sheetsData[name] = {
+                        headers,
+                        data: limit ? json.slice(0, limit) : json,
+                        fullData: json,
+                        totalRows: json.length
+                    };
+                });
+
+                // Tạo Worker API cho pipeline
+                const workerApi = new ExcelWorkerAPI();
+                workerApi.init().then(() => {
+                    resolve({
+                        fileName: file.name,
+                        originalBuffer: arrayBuf,  // giữ để extractSheetData dùng sau
+                        workerApi,
+                        sheetNames,
+                        sheetsData
+                    });
+                }).catch(reject);
+
+            } catch (e) {
+                reject(e);
             }
-        }
+        };
 
-        if (detected !== 'NONE') {
-            // Sửa cả KEY (tên cột) lẫn VALUE
-            finalData = data.map(row => {
-                const newRow = {};
-                for (const k in row) {
-                    const fixedKey = VietEncoder.fix(k, detected);
-                    newRow[fixedKey] = (typeof row[k] === 'string') ? VietEncoder.fix(row[k], detected) : row[k];
-                }
-                return newRow;
-            });
-            headers = headers.map(h => VietEncoder.fix(h, detected));
-        }
-    }
-
-    const workerApi = new ExcelWorkerAPI();
-    await workerApi.init();
-
-    return {
-        fileName: file.name,
-        workerApi: workerApi,
-        sheetNames: sheetNames,
-        sheetsData: {
-            [mainSheetName]: {
-                headers,
-                data: limit ? finalData.slice(0, limit) : finalData,
-                fullData: finalData,
-                totalRows: finalData.length,
-                detectedEncoding: detected
-            }
-        }
-    };
+        reader.readAsArrayBuffer(file);
+    });
 }
 
 // Expose ra global để app-studio.js có thể gọi được
 if (typeof window !== 'undefined') {
     window.readExcelFile = readExcelFile;
+    window.extractSheetData = extractSheetData;
     window.ExcelWorkerAPI = ExcelWorkerAPI;
 }

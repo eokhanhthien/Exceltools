@@ -1,0 +1,914 @@
+```html
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Excel Pipeline Studio</title>
+
+    <!-- SheetJS -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            background: #f3f4f6;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* LEFT PANEL */
+        .sidebar {
+            width: 280px;
+            background: #111827;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 15px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .upload-box {
+            background: #1f2937;
+            border: 2px dashed #374151;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+            cursor: pointer;
+        }
+
+        .upload-box:hover {
+            background: #374151;
+        }
+
+        input[type=file] {
+            display: none;
+        }
+
+        .panel-title {
+            font-size: 14px;
+            color: #9ca3af;
+        }
+
+        .pipeline {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .pipeline button {
+            background: #2563eb;
+            border: none;
+            color: #fff;
+            padding: 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .pipeline button:hover {
+            opacity: .9;
+        }
+
+        /* MAIN */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: white;
+            padding: 16px 24px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h2 {
+            font-size: 22px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            border: none;
+            padding: 10px 18px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .export-btn {
+            background: #16a34a;
+            color: white;
+        }
+
+        .clear-btn {
+            background: #dc2626;
+            color: white;
+        }
+
+        /* TOOLBAR */
+        .toolbar {
+            background: white;
+            padding: 14px 20px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+        }
+
+        .toolbar input {
+            flex: 1;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid #ccc;
+        }
+
+        /* TABLE */
+        .table-wrapper {
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        thead {
+            position: sticky;
+            top: 0;
+        }
+
+        th {
+            background: #2563eb;
+            color: white;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        tr:nth-child(even) {
+            background: #f9fafb;
+        }
+
+        /* RIGHT PANEL */
+        .right-panel {
+            width: 320px;
+            background: #fff;
+            border-left: 1px solid #ddd;
+            padding: 20px;
+        }
+
+        .right-panel h3 {
+            margin-bottom: 15px;
+        }
+
+        .stats {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .card {
+            background: #f3f4f6;
+            padding: 14px;
+            border-radius: 10px;
+        }
+
+        .empty {
+            color: #6b7280;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- LEFT -->
+    <div class="sidebar">
+
+        <div class="logo">
+            📊 Excel Studio
+        </div>
+
+        <label class="upload-box">
+            📁 Upload Excel
+            <input type="file" id="fileInput" accept=".xlsx,.xls" />
+        </label>
+
+        <div class="panel-title">
+            PIPELINE TOOLS
+        </div>
+
+        <div class="pipeline">
+
+            <button onclick="renameColumn()">
+                Rename Column
+            </button>
+
+            <button onclick="deleteColumn()">
+                Delete Column
+            </button>
+
+            <button onclick="selectColumns()">
+                Select Columns
+            </button>
+
+            <button onclick="addFormulaColumn()">
+                Formula Column
+            </button>
+
+            <button onclick="sortData()">
+                Sort Data
+            </button>
+
+        </div>
+
+    </div>
+
+    <!-- CENTER -->
+    <div class="main">
+
+        <div class="header">
+
+            <h2>
+                Excel Pipeline Studio
+            </h2>
+
+            <div class="header-actions">
+
+                <button class="btn export-btn" onclick="exportExcel()">
+
+                    Export Excel
+                </button>
+
+                <button class="btn clear-btn" onclick="clearData()">
+
+                    Clear
+                </button>
+
+            </div>
+
+        </div>
+
+        <div class="toolbar">
+
+            <input type="text" id="searchInput" placeholder="Filter dữ liệu..." />
+
+        </div>
+
+        <div class="table-wrapper">
+
+            <table id="excelTable">
+
+            </table>
+
+        </div>
+
+    </div>
+
+    <!-- RIGHT -->
+    <div class="right-panel">
+
+        <h3>Properties</h3>
+
+        <div class="stats">
+
+            <div class="card">
+                Rows:
+                <strong id="rowCount">
+                    0
+                </strong>
+            </div>
+
+            <div class="card">
+                Columns:
+                <strong id="colCount">
+                    0
+                </strong>
+            </div>
+
+            <div class="card empty">
+                Upload file Excel để bắt đầu
+            </div>
+
+        </div>
+
+    </div>
+
+    <script src="app.js"></script>
+
+</body>
+
+</html>
+<script>
+    let workbookData = [];
+    let headers = [];
+    let originalData = [];
+
+    const fileInput =
+        document.getElementById("fileInput");
+
+    const table =
+        document.getElementById("excelTable");
+
+    const searchInput =
+        document.getElementById("searchInput");
+
+    const rowCount =
+        document.getElementById("rowCount");
+
+    const colCount =
+        document.getElementById("colCount");
+
+    /* =====================
+       UPLOAD EXCEL
+    ===================== */
+
+    fileInput.addEventListener(
+        "change",
+        handleFile
+    );
+
+    function handleFile(e) {
+
+        const file =
+            e.target.files[0];
+
+        if (!file) {
+            return;
+        }
+
+        const reader =
+            new FileReader();
+
+        reader.onload = function (evt) {
+
+            const data =
+                new Uint8Array(
+                    evt.target.result
+                );
+
+            const workbook =
+                XLSX.read(data, {
+                    type: "array"
+                });
+
+            const sheetName =
+                workbook.SheetNames[0];
+
+            const sheet =
+                workbook.Sheets[sheetName];
+
+            workbookData =
+                XLSX.utils.sheet_to_json(
+                    sheet,
+                    {
+                        defval: ""
+                    }
+                );
+
+            originalData =
+                JSON.parse(
+                    JSON.stringify(
+                        workbookData
+                    )
+                );
+
+            headers =
+                Object.keys(
+                    workbookData[0] || {}
+                );
+
+            updateStats();
+
+            renderTable(
+                workbookData
+            );
+        };
+
+        reader.readAsArrayBuffer(
+            file
+        );
+    }
+
+    /* =====================
+       TABLE RENDER
+    ===================== */
+
+    function renderTable(data) {
+
+        table.innerHTML = "";
+
+        if (!data.length) {
+
+            table.innerHTML =
+                `
+        <tr>
+            <td style="
+                padding:30px;
+                text-align:center;
+            ">
+                Không có dữ liệu
+            </td>
+        </tr>
+        `;
+
+            return;
+        }
+
+        const thead =
+            document.createElement(
+                "thead"
+            );
+
+        const headRow =
+            document.createElement(
+                "tr"
+            );
+
+        headers.forEach(header => {
+
+            const th =
+                document.createElement(
+                    "th"
+                );
+
+            th.innerText =
+                header;
+
+            headRow.appendChild(
+                th
+            );
+        });
+
+        thead.appendChild(
+            headRow
+        );
+
+        table.appendChild(
+            thead
+        );
+
+        const tbody =
+            document.createElement(
+                "tbody"
+            );
+
+        data.forEach(row => {
+
+            const tr =
+                document.createElement(
+                    "tr"
+                );
+
+            headers.forEach(header => {
+
+                const td =
+                    document.createElement(
+                        "td"
+                    );
+
+                td.contentEditable =
+                    true;
+
+                td.innerText =
+                    row[header];
+
+                td.addEventListener(
+                    "blur",
+                    function () {
+
+                        row[header] =
+                            td.innerText;
+                    }
+                );
+
+                tr.appendChild(
+                    td
+                );
+            });
+
+            tbody.appendChild(
+                tr
+            );
+        });
+
+        table.appendChild(
+            tbody
+        );
+    }
+
+    /* =====================
+       FILTER
+    ===================== */
+
+    searchInput.addEventListener(
+        "input",
+        function () {
+
+            const keyword =
+                this.value
+                    .toLowerCase()
+                    .trim();
+
+            if (!keyword) {
+
+                renderTable(
+                    workbookData
+                );
+
+                return;
+            }
+
+            const filtered =
+                workbookData.filter(
+                    row => {
+
+                        return headers.some(
+                            header => {
+
+                                return String(
+                                    row[header]
+                                )
+                                    .toLowerCase()
+                                    .includes(
+                                        keyword
+                                    );
+                            });
+                    });
+
+            renderTable(
+                filtered
+            );
+        }
+    );
+
+    /* =====================
+       RENAME COLUMN
+    ===================== */
+
+    function renameColumn() {
+
+        if (!headers.length) {
+
+            alert(
+                "Upload file trước"
+            );
+
+            return;
+        }
+
+        const oldName =
+            prompt(
+                "Tên cột cũ:"
+            );
+
+        if (!oldName) {
+            return;
+        }
+
+        const newName =
+            prompt(
+                "Tên cột mới:"
+            );
+
+        if (!newName) {
+            return;
+        }
+
+        workbookData =
+            workbookData.map(
+                row => {
+
+                    row[newName] =
+                        row[oldName];
+
+                    delete row[
+                        oldName
+                    ];
+
+                    return row;
+                });
+
+        headers =
+            headers.map(h =>
+
+                h === oldName
+                    ? newName
+                    : h
+            );
+
+        renderTable(
+            workbookData
+        );
+    }
+
+    /* =====================
+       DELETE COLUMN
+    ===================== */
+
+    function deleteColumn() {
+
+        const column =
+            prompt(
+                "Tên cột muốn xoá:"
+            );
+
+        if (!column) {
+            return;
+        }
+
+        workbookData.forEach(
+            row => {
+
+                delete row[
+                    column
+                ];
+            });
+
+        headers =
+            headers.filter(
+                h => h !== column
+            );
+
+        updateStats();
+
+        renderTable(
+            workbookData
+        );
+    }
+
+    /* =====================
+       SELECT COLUMN
+    ===================== */
+
+    function selectColumns() {
+
+        const cols =
+            prompt(
+                "Nhập tên cột giữ lại (phân cách dấu phẩy)\nVí dụ: name,age,salary"
+            );
+
+        if (!cols) {
+            return;
+        }
+
+        const selected =
+            cols.split(",")
+                .map(x =>
+                    x.trim()
+                );
+
+        workbookData =
+            workbookData.map(
+                row => {
+
+                    let obj = {};
+
+                    selected.forEach(
+                        col => {
+
+                            obj[col] =
+                                row[col];
+                        });
+
+                    return obj;
+                });
+
+        headers =
+            selected;
+
+        updateStats();
+
+        renderTable(
+            workbookData
+        );
+    }
+
+    /* =====================
+       FORMULA COLUMN
+    ===================== */
+
+    function addFormulaColumn() {
+
+        const newColumn =
+            prompt(
+                "Tên cột mới:"
+            );
+
+        if (!newColumn) {
+            return;
+        }
+
+        const col1 =
+            prompt(
+                "Tên cột số 1:"
+            );
+
+        const col2 =
+            prompt(
+                "Tên cột số 2:"
+            );
+
+        const operator =
+            prompt(
+                "Toán tử (+ - * /)"
+            );
+
+        workbookData.forEach(
+            row => {
+
+                const a =
+                    Number(
+                        row[col1]
+                    ) || 0;
+
+                const b =
+                    Number(
+                        row[col2]
+                    ) || 0;
+
+                switch (operator) {
+
+                    case "+":
+                        row[
+                            newColumn
+                        ] = a + b;
+                        break;
+
+                    case "-":
+                        row[
+                            newColumn
+                        ] = a - b;
+                        break;
+
+                    case "*":
+                        row[
+                            newColumn
+                        ] = a * b;
+                        break;
+
+                    case "/":
+                        row[
+                            newColumn
+                        ] =
+                            b !== 0
+                                ? a / b
+                                : 0;
+                        break;
+                }
+            });
+
+        headers.push(
+            newColumn
+        );
+
+        updateStats();
+
+        renderTable(
+            workbookData
+        );
+    }
+
+    /* =====================
+       SORT
+    ===================== */
+
+    function sortData() {
+
+        const col =
+            prompt(
+                "Tên cột muốn sort:"
+            );
+
+        if (!col) {
+            return;
+        }
+
+        const type =
+            prompt(
+                "ASC hoặc DESC"
+            );
+
+        workbookData.sort(
+            (a, b) => {
+
+                if (type
+                    .toUpperCase()
+                    === "DESC") {
+
+                    return b[col]
+                        > a[col]
+                        ? 1 : -1;
+                }
+
+                return a[col]
+                    > b[col]
+                    ? 1 : -1;
+            });
+
+        renderTable(
+            workbookData
+        );
+    }
+
+    /* =====================
+       EXPORT EXCEL
+    ===================== */
+
+    function exportExcel() {
+
+        const ws =
+            XLSX.utils
+                .json_to_sheet(
+                    workbookData
+                );
+
+        const wb =
+            XLSX.utils
+                .book_new();
+
+        XLSX.utils
+            .book_append_sheet(
+                wb,
+                ws,
+                "Processed"
+            );
+
+        XLSX.writeFile(
+            wb,
+            "processed.xlsx"
+        );
+    }
+
+    /* =====================
+       CLEAR DATA
+    ===================== */
+
+    function clearData() {
+
+        const confirmClear =
+            confirm(
+                "Xoá toàn bộ dữ liệu?"
+            );
+
+        if (!confirmClear) {
+            return;
+        }
+
+        workbookData = [];
+        headers = [];
+
+        table.innerHTML =
+            "";
+
+        searchInput.value =
+            "";
+
+        updateStats();
+    }
+
+    /* =====================
+       UPDATE STATS
+    ===================== */
+
+    function updateStats() {
+
+        rowCount.innerText =
+            workbookData.length;
+
+        colCount.innerText =
+            headers.length;
+    }
+
+
+</script>

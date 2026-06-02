@@ -285,48 +285,40 @@ body {
     background: white; 
 }
 
+.toolbar-right { margin-left: auto; }
+
+/* HTML table — giống test.html */
 table { 
     width: max-content;
     min-width: 100%;
     border-collapse: collapse; 
-    font-size: 12px; /* DENSE UI */
-    font-family: Arial, sans-serif; /* Excel style */
+    font-size: 13px;
+    font-family: Arial, sans-serif;
+    background: white;
 }
+thead { position: sticky; top: 0; z-index: 2; }
 th { 
-    background: #f8f9fa; 
-    color: var(--text-muted); 
+    background: #2563eb;
+    color: white;
     font-weight: 600; 
-    padding: 4px 8px; /* DENSE PADDING */
+    padding: 10px 12px;
     text-align: left; 
-    position: sticky; 
-    top: 0; 
-    z-index: 2; 
-    border-bottom: 1px solid var(--border-table); 
-    border-right: 1px solid var(--border-table);
-    box-shadow: 0 1px 0 var(--border-table);
+    border: 1px solid #1d4ed8;
     white-space: nowrap;
-}
-/* Row number column pseudo style */
-th.row-index, td.row-index {
-    position: sticky;
-    left: 0;
-    background: #f8f9fa;
-    color: var(--text-muted);
-    font-weight: 500;
-    text-align: center;
-    z-index: 3;
-    border-right: 1px solid var(--border-table);
-    width: 40px;
-    min-width: 40px;
+    user-select: none;
 }
 td { 
-    padding: 4px 8px; /* DENSE PADDING */
-    border-bottom: 1px solid var(--border-table); 
-    border-right: 1px solid var(--border-table); 
+    padding: 8px 12px;
+    border: 1px solid #e5e7eb;
     color: var(--text-main);
     white-space: nowrap;
+    min-width: 80px;
 }
-tr:hover td { background: #f1f8ff; } /* Light hover effect */
+tr:nth-child(even) td { background: #f9fafb; }
+tr:hover td { background: #eff6ff; }
+/* contentEditable cell ở ROOT */
+td[contenteditable="true"] { cursor: text; outline: none; }
+td[contenteditable="true"]:focus { background: #fefce8 !important; box-shadow: inset 0 0 0 2px #facc15; }
 
 /* CONFIG PANELS */
 .config-header {
