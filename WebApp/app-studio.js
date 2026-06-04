@@ -1479,10 +1479,8 @@ function renderConfigPanel() {
                     VND:n=>parseFloat(n||0).toLocaleString('vi-VN',{style:'currency',currency:'VND'}),
                     TODAY:()=>_df(new Date(),'dd/MM/yyyy'), DATEFORMAT:(v,fmt)=>_df(v,fmt),
                     DATECONVERT:(s,sf,df)=>_df(_parseFmt(s,sf), df),
-                    // DATECONVERTPRO preview
                     DATECONVERTPRO: (s, srcFmt, destFmt) => {
                         if (s === null || s === undefined || String(s).trim() === '') return 'Error';
-                        // _parseFmtPro inline cho preview
                         const cleanS = String(s).trim();
                         const numVal = parseFloat(cleanS.replace(/,/g, ''));
                         let _d, _m, _y;
@@ -1526,12 +1524,10 @@ function renderConfigPanel() {
 
                 let processedFormula = formula.replace(/([^<>!])=([^=])/g, '$1==$2');
                 const expr = processedFormula.replace(/\[([^\]]+)\]/g, (_, col) => {
-                    // Tìm cột không phân biệt hoa thường và khoảng trắng
                     const realKey = Object.keys(sampleRow).find(k => k.trim().toLowerCase() === col.trim().toLowerCase()) || col;
                     const v = sampleRow[realKey];
                     if (v === null || v === undefined || v === '') return '""';
                     const s = String(v).trim();
-                    // Nếu chuỗi chứa dấu ngày tháng (/ hoặc -) thì BUỘC phải là chuỗi
                     if (s.includes('/') || s.includes('-') || s.includes('.')) {
                         return '"' + s.replace(/\\/g,'\\\\').replace(/"/g,'\\"') + '"';
                     }
@@ -1543,7 +1539,6 @@ function renderConfigPanel() {
                 });
                 const res = new Function('_XL', 'with(_XL){return ' + expr + ';}')(_XL);
                 
-                // Trích xuất các cột được dùng để hiển thị giá trị thực tế của dòng mẫu
                 const usedCols = [...formula.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
                 const debugInfo = usedCols.map(c => `${c}: "${sampleRow[c] || ''}"`).join(' | ');
                 
@@ -1565,6 +1560,17 @@ function renderConfigPanel() {
                 </div>
             </div>`).join('');
 
+        function renderFormulaHTML(formulaStr, availableCols) {
+            if (!formulaStr) return '';
+            let html = formulaStr.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            html = html.replace(/\[(.*?)\]/g, (match, colName) => {
+                const isValid = availableCols.map(c=>c.toLowerCase()).includes(colName.toLowerCase());
+                const colorStyle = isValid ? 'background:#e0e7ff;color:#4338ca;border:1px solid #c7d2fe;' : 'background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;';
+                return `<span class="formula-chip" contenteditable="false" style="display:inline-block;padding:0px 4px;margin:0 1px;border-radius:4px;font-size:12px;user-select:none;vertical-align:middle;font-weight:600;font-family:sans-serif;${colorStyle}">[${colName}]</span>&#8203;`;
+            });
+            return html.replace(/\n/g, '<br>');
+        }
+
         dynamicPane.innerHTML = `
             <h3 class="config-title" style="color:var(--success)">✅ Công Thức Excel (V2.0 - DATECONVERT READY)</h3>
             <p class="config-desc">Viết công thức theo cú pháp Excel. Dùng <b>[Tên Cột]</b> để tham chiếu cột dữ liệu.</p>
@@ -1573,7 +1579,8 @@ function renderConfigPanel() {
                 <input id="fb-col-name" class="form-control" style="height:32px;" placeholder="VD: Phan_Loai" value="${step.config.newColName || ''}" />
             </div>
             <label class="form-label">📝 Thanh Công Thức</label>
-            <textarea id="fb-formula" rows="3" style="width:100%;font-family:monospace;font-size:13px;padding:8px;border:2px solid var(--primary);border-radius:6px;resize:vertical;box-sizing:border-box;line-height:1.5;" placeholder='VD: IF([So du]>=5000000, "VIP", "Thuong")'>${(step.config.formula || '').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+            <div id="fb-formula-editor" style="width:100%;font-family:monospace;font-size:13px;padding:8px;border:2px solid var(--primary);border-radius:6px;min-height:70px;background:#fff;outline:none;white-space:pre-wrap;word-break:break-word;" contenteditable="true" spellcheck="false"></div>
+            <textarea id="fb-formula" style="display:none;"></textarea>
             <div id="fb-preview-result" style="font-size:12px;font-weight:600;margin:4px 0 10px 0;min-height:16px;"></div>
             <label class="form-label">📌 Cột dữ liệu (click để chèn)</label>
             <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:12px;max-height:70px;overflow-y:auto;padding:4px 0;">${colChips}</div>
@@ -1581,50 +1588,75 @@ function renderConfigPanel() {
             <div style="background:var(--surface);border-radius:8px;padding:8px;border:1px solid var(--border);max-height:300px;overflow-y:auto;">${fnRefHtml}</div>
         `;
 
+        const editor = document.getElementById('fb-formula-editor');
         const ta = document.getElementById('fb-formula');
-        ta.value = step.config.formula || '';
-        fbPreview(ta.value);
+        
+        // Khởi tạo HTML cho editor dựa trên formula text hiện tại
+        const initialFormula = step.config.formula || '';
+        editor.innerHTML = renderFormulaHTML(initialFormula, fbHeaders);
+        ta.value = initialFormula;
+        fbPreview(initialFormula);
 
         let fbDebounceTimer = null;
-        ta.addEventListener('input', () => {
-            step.config.formula = ta.value;
-            fbPreview(ta.value);
+        
+        function updateFormulaFromEditor() {
+            let rawText = editor.innerText.replace(/\u200B/g, '').replace(/\u00A0/g, ' ');
+            ta.value = rawText;
+            step.config.formula = rawText;
+            fbPreview(rawText);
             saveStateToLocal();
+            
             clearTimeout(fbDebounceTimer);
             fbDebounceTimer = setTimeout(() => {
-                const selStart = ta.selectionStart;
-                const selEnd   = ta.selectionEnd;
                 recalculatePipeline();
-                setTimeout(() => {
-                    const newTa = document.getElementById('fb-formula');
-                    if (newTa) {
-                        newTa.focus();
-                        newTa.selectionStart = selStart;
-                        newTa.selectionEnd   = selEnd;
-                    }
-                }, 80);
             }, 700);
+        }
+
+        editor.addEventListener('input', updateFormulaFromEditor);
+
+        // Xử lý paste dạng plain text
+        editor.addEventListener('paste', (e) => {
+            e.preventDefault();
+            const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+            document.execCommand('insertText', false, text);
         });
+
         document.getElementById('fb-col-name').addEventListener('input', e => {
             step.config.newColName = e.target.value.trim();
             saveStateToLocal();
         });
+
+        function insertHtmlAtCursor(html) {
+            editor.focus();
+            if (typeof window.getSelection !== "undefined") {
+                const sel = window.getSelection();
+                if (sel.rangeCount > 0) {
+                    const range = sel.getRangeAt(0);
+                    if (!editor.contains(range.commonAncestorContainer)) {
+                        range.selectNodeContents(editor);
+                        range.collapse(false);
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
+                }
+            }
+            document.execCommand('insertHTML', false, html);
+        }
+
         document.querySelectorAll('.fb-col-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                const ins = '[' + btn.dataset.col + ']';
-                const s = ta.selectionStart, e2 = ta.selectionEnd;
-                ta.value = ta.value.substring(0, s) + ins + ta.value.substring(e2);
-                ta.selectionStart = ta.selectionEnd = s + ins.length;
-                ta.focus(); ta.dispatchEvent(new Event('input'));
+                const colName = btn.dataset.col;
+                const chipHtml = `<span class="formula-chip" contenteditable="false" style="display:inline-block;padding:0px 4px;margin:0 1px;background:#e0e7ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:4px;font-size:12px;user-select:none;vertical-align:middle;font-weight:600;font-family:sans-serif;">[${colName}]</span>&#8203;`;
+                insertHtmlAtCursor(chipHtml);
+                updateFormulaFromEditor();
             });
         });
+
         document.querySelectorAll('.fb-fn-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const ins = btn.dataset.tpl;
-                const s = ta.selectionStart, e2 = ta.selectionEnd;
-                ta.value = ta.value.substring(0, s) + ins + ta.value.substring(e2);
-                ta.selectionStart = ta.selectionEnd = s + ins.length;
-                ta.focus(); ta.dispatchEvent(new Event('input'));
+                insertHtmlAtCursor(ins);
+                updateFormulaFromEditor();
             });
         });
     }

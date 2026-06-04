@@ -682,3 +682,104 @@ input:checked + .slider:before { transform: translateX(14px); }
 .is-calculating .config-title {
     animation: pulseGlow 0.8s infinite alternate;
 }
+
+/* ==========================================================================
+   UI POLISHING & ENHANCEMENTS
+   ========================================================================== */
+.btn {
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+.btn:active {
+    transform: scale(0.97); /* Micro-interaction khi click */
+}
+.step-card {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.step-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+}
+.dropdown-menu {
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    border: 1px solid rgba(0,0,0,0.05);
+    overflow: hidden;
+}
+.config-panel {
+    border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
+}
+
+/* ==========================================================================
+   MOBILE & LANDSCAPE RESPONSIVE OPTIMIZATIONS
+   ========================================================================== */
+
+/* Chung cho màn hình nhỏ gọn */
+@media screen and (max-width: 900px) {
+    .sidebar-left { width: 220px; }
+    .app-header { height: 44px; padding: 0 12px; }
+    .sidebar-right { top: 44px; width: 320px; max-width: 85vw; border-radius: 0; }
+    .brand h1 { font-size: 14px; }
+    /* Thanh cuộn mỏng hơn cho mobile */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { border-radius: 6px; border: none; }
+    #table-search { width: 140px !important; }
+}
+
+/* Ưu tiên tối ưu cực mạnh cho Màn hình NGANG (Landscape) - Chiều cao bị giới hạn */
+@media screen and (max-width: 950px) and (orientation: landscape) {
+    .app-header { height: 36px; }
+    .logo { width: 20px; height: 20px; }
+    .logo::after { font-size: 12px; }
+    .brand h1 { display: none; } /* Ẩn tên app đi để nhường chỗ cho nút Hành động */
+    
+    .sidebar-right {
+        top: 36px;
+        width: 360px; /* Cần rộng ngang để bấm công thức dễ */
+        max-width: 60vw; /* Không che khuất quá nhiều lưới bên trái */
+        box-shadow: -4px 0 16px rgba(0,0,0,0.15);
+    }
+    
+    /* Thu hẹp Sidebar trái lại một chút */
+    .sidebar-left { width: 200px; }
+    
+    /* Ép padding dọc nhỏ lại để tiết kiệm chiều cao */
+    .recipe-header { padding: 6px 12px; }
+    .add-step-wrapper { padding: 8px 12px; }
+    .pipeline-steps { padding: 8px 12px; gap: 8px; }
+    
+    /* Tối ưu khoảng trống trong bảng Config */
+    .config-header { padding: 8px 12px; }
+    .config-body { padding: 12px; }
+    .box-panel { padding: 10px; margin-bottom: 8px; }
+    .config-desc { margin-bottom: 10px; font-size: 11px; line-height: 1.3; }
+    
+    .form-control { padding: 6px 8px; font-size: 12px; }
+    .form-label { margin-bottom: 2px; }
+    
+    /* Lưới Data cũng ép nhỏ lại */
+    .table-toolbar { height: 32px; padding: 0 12px; }
+    th { padding: 6px 8px; font-size: 11px; }
+    td { padding: 6px 8px; font-size: 12px; }
+    
+    /* Ô Editor công thức */
+    #fb-formula-editor { padding: 6px !important; min-height: 50px !important; }
+}
+
+/* Cho màn hình DỌC (Portrait) - Mobile */
+@media screen and (max-width: 600px) and (orientation: portrait) {
+    .app-container {
+        flex-direction: column;
+    }
+    .sidebar-left {
+        width: 100%;
+        height: 45vh; /* Luồng kịch bản chiếm nửa trên */
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+    .sidebar-right {
+        width: 100vw; /* Overlay Config Panel tràn màn hình */
+        max-width: 100vw;
+        border-radius: 0;
+    }
+}
