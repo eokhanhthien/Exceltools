@@ -724,6 +724,11 @@ input:checked + .slider:before { transform: translateX(14px); }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-thumb { border-radius: 6px; border: none; }
     #table-search { width: 140px !important; }
+    
+    /* Chống Zoom tự động trên iPhone/Safari bằng cách ép font-size 16px */
+    input, select, textarea, [contenteditable="true"] {
+        font-size: 16px !important;
+    }
 }
 
 /* Ưu tiên tối ưu cực mạnh cho Màn hình NGANG (Landscape) - Chiều cao bị giới hạn */
