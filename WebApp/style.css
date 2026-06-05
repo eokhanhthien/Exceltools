@@ -788,3 +788,60 @@ input:checked + .slider:before { transform: translateX(14px); }
         border-radius: 0;
     }
 }
+
+/* CUSTOM TOOLTIP FOR FORMULA BUILDER */
+#global-tooltip {
+    visibility: hidden;
+    opacity: 0;
+    position: fixed;
+    background: #1e293b;
+    color: #f8fafc;
+    text-align: left;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: var(--font);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    z-index: 999999;
+    width: 260px;
+    pointer-events: none;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    line-height: 1.5;
+    border: 1px solid rgba(255,255,255,0.1);
+    transform: translateY(4px);
+}
+#global-tooltip.show {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(0);
+}
+#global-tooltip b {
+    color: #38bdf8;
+    display: block;
+    font-size: 13px;
+    margin-bottom: 4px;
+}
+#global-tooltip .ex-lbl {
+    color: #94a3b8;
+    font-size: 10px;
+    text-transform: uppercase;
+    font-weight: 700;
+    margin-top: 8px;
+    display: block;
+    letter-spacing: 0.5px;
+}
+#global-tooltip .ex-code {
+    background: #0f172a;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    color: #a7f3d0;
+    margin-top: 2px;
+    display: block;
+    word-break: break-all;
+}
+#global-tooltip .ex-res {
+    color: #fde047;
+    margin-top: 4px;
+    display: block;
+}
