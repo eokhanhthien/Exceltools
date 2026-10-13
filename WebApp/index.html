@@ -66,14 +66,12 @@
                 <div class="add-step-wrapper">
                     <button class="btn btn-add w-full text-left" id="btn-add-step">+ Thêm Công Đoạn</button>
                     <div class="dropdown-menu hidden" id="dropdown-add-step">
-                        <a href="#" data-action="FILTER">Lọc Dữ Liệu (Filter)</a>
-                        <a href="#" data-action="VLOOKUP">Trộn Data (VLOOKUP)</a>
-                        <a href="#" data-action="GROUP_BY">Gộp Nhóm (Group/Pivot)</a>
-                        <a href="#" data-action="CONDITIONAL_COLUMN">Thêm Cột Logic (IF/THEN)</a>
-                        <a href="#" data-action="MATH_COMPUTE">Công Thức Toán Học (+ - * /)</a>
+                        <a href="#" data-action="FILTER">⚡ Lọc Dữ Liệu (Filter)</a>
+                        <a href="#" data-action="SORT">↕️ Sắp Xếp Dữ Liệu (Sort)</a>
+                        <a href="#" data-action="VLOOKUP">🔗 Trộn Data (VLOOKUP)</a>
+                        <a href="#" data-action="GROUP_BY">📊 Gộp Nhóm (Group/Pivot)</a>
                         <a href="#" data-action="FORMULA_BUILDER">🧩 Xây Công Thức (Kéo Thả)</a>
-                        <a href="#" data-action="SELECT_COLUMNS">Xào Cột (Select/Rename)</a>
-                        <a href="#" data-action="COMPARE">So Sánh File (Compare)</a>
+                        <a href="#" data-action="COMPARE">⚖️ So Sánh File (Compare)</a>
                     </div>
                 </div>
                 <div class="pipeline-steps" id="pipeline-steps">
@@ -123,6 +121,24 @@
             <div id="config-dynamic" class="hidden"></div>
         </div>
     </aside>
+
+    <!-- Context Menu cho Header Cột (Quick Sort / Filter) -->
+    <div id="table-header-context-menu" class="header-context-menu hidden">
+        <div class="context-menu-header" id="context-col-name">Cột</div>
+        <button class="context-menu-item" id="menu-sort-asc" data-action="SORT_ASC">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            Sắp xếp A → Z (Tăng dần)
+        </button>
+        <button class="context-menu-item" id="menu-sort-desc" data-action="SORT_DESC">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+            Sắp xếp Z → A (Giảm dần)
+        </button>
+        <div class="context-menu-divider"></div>
+        <button class="context-menu-item" id="menu-filter-col" data-action="FILTER_COL">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            Tạo bộ lọc cho cột này (Filter)
+        </button>
+    </div>
 
 </body>
 </html>

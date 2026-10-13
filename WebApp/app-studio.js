@@ -33,8 +33,11 @@ function loadStateFromLocal() {
         const saved = localStorage.getItem('DataX_AutoSave_Steps');
         if (saved) {
             const steps = JSON.parse(saved);
-            if (Array.isArray(steps) && steps.length > 0) {
+            if (Array.isArray(steps)) {
                 AppState.steps = steps;
+                if (steps.length > 0 && (!AppState.activeStepId || AppState.activeStepId === 'ROOT')) {
+                    AppState.activeStepId = steps[steps.length - 1].id;
+                }
             }
         }
     } catch(e) {
@@ -48,7 +51,14 @@ function createStep(type) {
     let title = "";
     let config = {};
 
-    if (type === 'FILTER') { title = "Lọc Dữ Liệu"; config = { conditions: [], logicType: "AND" }; }
+    if (type === 'FILTER') { 
+        title = "Lọc Dữ Liệu"; 
+        config = { conditions: [], logicType: "AND", ignoreAccents: true, caseSensitive: false }; 
+    }
+    else if (type === 'SORT') { 
+        title = "Sắp Xếp Dữ Liệu"; 
+        config = { criteria: [], nullPosition: 'LAST', ignoreAccents: true }; 
+    }
     else if (type === 'VLOOKUP') { title = "Merge Bảng Data"; config = { joinType: 'LEFT', lookupData: null, grabColumns: [], enableFlag: true, flagColName: 'Trang_Thai_Khop' }; }
     else if (type === 'GROUP_BY') { title = "Gộp (Group By)"; config = { aggregates: [] }; }
     else if (type === 'CONDITIONAL_COLUMN') { title = "Thêm Cột (Logic IF)"; config = { newColName: "", rules: [], elseVal: "", elseType: "VALUE" }; }
@@ -130,6 +140,9 @@ function renderPipelineSteps() {
             const id = e.target.closest('.step-node-container').dataset.id;
             AppState.steps = AppState.steps.filter(s => s.id !== id);
             if (AppState.activeStepId === id) AppState.activeStepId = 'ROOT';
+            saveStateToLocal();
+            renderPipelineSteps();
+            renderConfigPanel();
             recalculatePipeline(true);
         });
     });
@@ -138,14 +151,48 @@ function renderPipelineSteps() {
         btn.addEventListener('click', (e) => {
             const id = e.target.closest('.step-node-container').dataset.id;
             const step = AppState.steps.find(s => s.id === id);
-            step.disabled = !step.disabled;
-            recalculatePipeline(true);
+            if (step) {
+                step.disabled = !step.disabled;
+                saveStateToLocal();
+                renderPipelineSteps();
+                recalculatePipeline(true);
+            }
         });
     });
 }
 
 function getStepDesc(step) {
-    if (step.type === 'FILTER') return step.config.conditions.length ? `Lọc ${step.config.conditions.length} điều kiện (${step.config.logicType || 'AND'})` : 'Chưa cấu hình';
+    if (step.type === 'FILTER') {
+        const conds = (step.config.conditions || []).filter(c => c && c.col);
+        if (!conds.length) return 'Chưa cấu hình điều kiện';
+        const first = conds[0];
+        const opLabels = {
+            'CONTAINS': 'chứa',
+            'NOT_CONTAINS': 'không chứa',
+            'EQUALS': '=',
+            'NOT_EQUALS': '!=',
+            'STARTS_WITH': 'bắt đầu',
+            'ENDS_WITH': 'kết thúc',
+            'GREATER_THAN': '>',
+            'GREATER_EQUAL': '>=',
+            'LESS_THAN': '<',
+            'LESS_EQUAL': '<=',
+            'BETWEEN': 'khoảng',
+            'IN': 'trong list',
+            'NOT_IN': 'ngoài list',
+            'IS_EMPTY': 'ô trống',
+            'NOT_EMPTY': 'có dữ liệu'
+        };
+        const opName = opLabels[first.op] || first.op;
+        let desc = `${first.col} ${opName} ${first.val || ''}`.trim();
+        if (conds.length > 1) desc += ` (+${conds.length - 1} ĐK ${step.config.logicType || 'AND'})`;
+        return desc;
+    }
+    if (step.type === 'SORT') {
+        const crits = (step.config.criteria || []).filter(c => c && c.col);
+        if (!crits.length) return 'Chưa chọn cột sắp xếp';
+        return crits.map(c => `${c.col} (${c.dir === 'DESC' ? '▼' : '▲'})`).join(', ');
+    }
     if (step.type === 'VLOOKUP') return step.config.lookupData ? `Join ${step.config.grabColumns.length} cột qua ${step.config.baseKey || '?'}` : 'Chưa nhập file';
     if (step.type === 'GROUP_BY') return step.config.groupCol ? `Nhóm theo ${step.config.groupCol}` : 'Chưa cấu hình';
     if (step.type === 'CONDITIONAL_COLUMN') return step.config.newColName ? `Tạo cột: ${step.config.newColName}` : 'Chưa cấu hình';
@@ -173,14 +220,18 @@ document.querySelectorAll('#dropdown-add-step a').forEach(a => {
         const newStep = createStep(type);
         AppState.steps.push(newStep);
         AppState.activeStepId = newStep.id;
+        saveStateToLocal();
         renderPipelineSteps();
         renderConfigPanel();
+        recalculatePipeline(true);
     });
 });
 
 // --- EXECUTION (ENGINE BRIDGE) ---
 // Chạy engine tính toán toàn bộ các node từ trên xuống dưới
 async function recalculatePipeline(silent = false) {
+    saveStateToLocal(); // Tự động lưu thiết lập pipeline ngay lập tức
+
     if (!AppState.rootFileCache || !AppState.rootFileCache.workerApi) return;
     
     document.getElementById('preview-mini-loading').classList.remove('hidden');
@@ -194,18 +245,18 @@ async function recalculatePipeline(silent = false) {
         // Gọi Worker chạy Pipeline trên TOÀN BỘ dữ liệu để đảm bảo chính xác 100%
         const result = await AppState.rootFileCache.workerApi.runPipeline(AppState.steps, fullData);
         
-        // Cập nhật Cache kết quả (dùng cho Preview)
-        // Lưu ý: Worker trả về previewData (1000 dòng đầu của kết quả cuối cùng)
-        // Chúng ta cần lưu kết quả trung gian nếu muốn preview từng bước, 
-        // nhưng để đơn giản và chính xác tuyệt đối cho bước hiện tại:
-        AppState.cachedResults.set(AppState.activeStepId, result.previewData);
-        
-        // Nếu muốn xem preview của CÁC bước trước đó, ta có thể cần chạy lại pipeline từng phần
-        // Tuy nhiên thường người dùng quan tâm kết quả tại bước đang đứng.
+        // Cập nhật Cache kết quả từng bước (đã được Worker tính toán)
+        if (result.stepPreviews) {
+            for (const [sId, pData] of Object.entries(result.stepPreviews)) {
+                AppState.cachedResults.set(sId, pData);
+            }
+        }
+        if (!AppState.cachedResults.has(AppState.activeStepId)) {
+            AppState.cachedResults.set(AppState.activeStepId, result.previewData);
+        }
         
         console.log(`Pipeline Sync: ${result.totalRows} dòng kết quả.`);
         
-        saveStateToLocal(); // Tự động lưu thiết lập pipeline
         renderPipelineSteps(); // Cập nhật Mô tả
         renderPreviewAtActiveStep();
     } catch (err) {
@@ -296,6 +347,7 @@ if (document.getElementById('btn-export-preset')) {
 
                     AppState.steps = stepsObj;
                     AppState.activeStepId = stepsObj.length > 0 ? stepsObj[0].id : 'ROOT';
+                    saveStateToLocal();
                     renderPipelineSteps();
                     renderConfigPanel();
                     recalculatePipeline();
@@ -440,8 +492,16 @@ function _initTableSearch() {
 }
 
 function renderPreviewAtActiveStep() {
-    const activeData = AppState.cachedResults.get(AppState.activeStepId);
-    let renderData = (activeData && activeData.length > 0) ? activeData : [];
+    let activeData;
+    if (AppState.activeStepId === 'ROOT') {
+        activeData = AppState.rootData;
+    } else {
+        activeData = AppState.cachedResults.get(AppState.activeStepId);
+        if ((!activeData || activeData.length === 0) && AppState.cachedResults.size > 0) {
+            activeData = Array.from(AppState.cachedResults.values()).pop();
+        }
+    }
+    let renderData = (activeData && activeData.length > 0) ? activeData : (AppState.rootData || []);
     const headers = renderData.length > 0
         ? Object.keys(renderData[0]).filter(k => k !== '__original_row_idx__')
         : getHeadersAtCurrentStep().filter(k => k !== '__original_row_idx__');
@@ -459,12 +519,35 @@ function renderPreviewAtActiveStep() {
     if (thead) {
         thead.innerHTML = '';
         const tr = document.createElement('tr');
+        const activeStep = AppState.steps.find(s => s.id === AppState.activeStepId);
+
         headers.forEach(h => {
             const th = document.createElement('th');
-            th.innerText = h;
+            th.className = 'grid-header-cell';
+            th.dataset.col = h;
+
+            let sortBadge = '';
+            if (activeStep && activeStep.type === 'SORT' && activeStep.config.criteria) {
+                const crit = activeStep.config.criteria.find(c => c && c.col === h);
+                if (crit) {
+                    sortBadge = `<span class="header-sort-badge">${crit.dir === 'DESC' ? '▼' : '▲'}</span>`;
+                }
+            }
+
+            th.innerHTML = `
+                <div class="th-content-wrapper">
+                    <span class="th-title-text" title="${h}">${h}</span>
+                    ${sortBadge}
+                    <button class="th-menu-trigger" data-col="${h}" title="Sắp xếp / Lọc nhanh">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                </div>
+            `;
             tr.appendChild(th);
         });
         thead.appendChild(tr);
+
+        _bindHeaderEvents();
     }
 
     // Render rows
@@ -480,6 +563,118 @@ function renderPreviewAtActiveStep() {
     const colCountEl = document.getElementById('preview-col-count');
     if (rowCountEl) rowCountEl.innerText = displayText;
     if (colCountEl) colCountEl.innerText = `${headers.length} cột`;
+}
+
+// =============================================
+// HEADER CONTEXT MENU (QUICK SORT & FILTER)
+// =============================================
+let _activeContextCol = null;
+
+function _bindHeaderEvents() {
+    const thead = document.getElementById('data-thead');
+    if (!thead) return;
+
+    thead.querySelectorAll('.grid-header-cell').forEach(th => {
+        th.addEventListener('click', (e) => {
+            const col = th.dataset.col;
+            if (!col) return;
+            e.stopPropagation();
+            _openHeaderContextMenu(col, th);
+        });
+    });
+
+    _initHeaderContextMenu();
+}
+
+function _openHeaderContextMenu(col, thElement) {
+    _activeContextCol = col;
+    const menu = document.getElementById('table-header-context-menu');
+    if (!menu) return;
+
+    const colHeader = document.getElementById('context-col-name');
+    if (colHeader) colHeader.innerText = 'Cột: ' + col;
+
+    const rect = thElement.getBoundingClientRect();
+    menu.style.top = (rect.bottom + 2) + 'px';
+    let leftPos = rect.left;
+    if (leftPos + 220 > window.innerWidth) leftPos = window.innerWidth - 230;
+    menu.style.left = Math.max(10, leftPos) + 'px';
+    menu.classList.remove('hidden');
+}
+
+function _initHeaderContextMenu() {
+    const menu = document.getElementById('table-header-context-menu');
+    if (!menu || menu.dataset.bound) return;
+    menu.dataset.bound = '1';
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#table-header-context-menu') && !e.target.closest('.grid-header-cell')) {
+            menu.classList.add('hidden');
+        }
+    });
+
+    menu.querySelectorAll('.context-menu-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            const action = item.dataset.action;
+            const col = _activeContextCol;
+            menu.classList.add('hidden');
+            if (!col) return;
+
+            if (action === 'SORT_ASC' || action === 'SORT_DESC') {
+                const dir = action === 'SORT_ASC' ? 'ASC' : 'DESC';
+                let activeStep = AppState.steps.find(s => s.id === AppState.activeStepId);
+                
+                if (activeStep && activeStep.type === 'SORT') {
+                    if (!activeStep.config.criteria) activeStep.config.criteria = [];
+                    const existIdx = activeStep.config.criteria.findIndex(c => c && c.col === col);
+                    if (existIdx >= 0) {
+                        activeStep.config.criteria[existIdx].dir = dir;
+                    } else {
+                        activeStep.config.criteria.push({ col, dir, dataType: 'AUTO' });
+                    }
+                } else {
+                    const newStep = createStep('SORT');
+                    newStep.config.criteria = [{ col, dir, dataType: 'AUTO' }];
+                    
+                    const curIdx = AppState.steps.findIndex(s => s.id === AppState.activeStepId);
+                    if (curIdx >= 0) {
+                        AppState.steps.splice(curIdx + 1, 0, newStep);
+                    } else {
+                        AppState.steps.push(newStep);
+                    }
+                    AppState.activeStepId = newStep.id;
+                }
+                
+                saveStateToLocal();
+                renderPipelineSteps();
+                renderConfigPanel();
+                recalculatePipeline(true);
+            } else if (action === 'FILTER_COL') {
+                let activeStep = AppState.steps.find(s => s.id === AppState.activeStepId);
+                
+                if (activeStep && activeStep.type === 'FILTER') {
+                    if (!activeStep.config.conditions) activeStep.config.conditions = [];
+                    activeStep.config.conditions.push({ col, op: 'CONTAINS', val: '' });
+                } else {
+                    const newStep = createStep('FILTER');
+                    newStep.config.conditions = [{ col, op: 'CONTAINS', val: '' }];
+                    
+                    const curIdx = AppState.steps.findIndex(s => s.id === AppState.activeStepId);
+                    if (curIdx >= 0) {
+                        AppState.steps.splice(curIdx + 1, 0, newStep);
+                    } else {
+                        AppState.steps.push(newStep);
+                    }
+                    AppState.activeStepId = newStep.id;
+                }
+                
+                saveStateToLocal();
+                renderPipelineSteps();
+                renderConfigPanel();
+                recalculatePipeline(true);
+            }
+        });
+    });
 }
 
 
@@ -585,7 +780,7 @@ function renderConfigPanel() {
         fileInput.addEventListener('change', async (e) => {
             if (e.target.files.length > 0) {
                 document.getElementById('global-loading').classList.remove('hidden');
-                document.getElementById('global-loading-text').innerText = "Đang đọc cấu trúc file...";
+                document.getElementById('global-loading-text').innerText = "Đang đọc file và tự động chạy lại các công đoạn...";
                 try {
                     // Cần huỷ worker cũ nếu đã từng tải file trước đó để tránh tràn RAM
                     if (AppState.rootFileCache && AppState.rootFileCache.workerApi) {
@@ -603,7 +798,23 @@ function renderConfigPanel() {
                     AppState.rootHeaders = sheetData.headers;
                     AppState.rootTotalRows = sheetData.totalRows || sheetData.data.length;
 
+                    // Tự động gắn lại nguồn dữ liệu phụ cho VLOOKUP / COMPARE nếu chọn Tab trong file gốc
+                    AppState.steps.forEach(step => {
+                        if (step.type === 'VLOOKUP' && step.config.sourceSheet && result.sheetsData[step.config.sourceSheet]) {
+                            step.config.lookupData = result.sheetsData[step.config.sourceSheet].data;
+                        }
+                        if (step.type === 'COMPARE' && step.config.sourceSheet && result.sheetsData[step.config.sourceSheet]) {
+                            step.config.compareData = result.sheetsData[step.config.sourceSheet].data;
+                        }
+                    });
+
+                    // Nếu có danh sách các bước đã lưu, tự động active bước cuối cùng để hiển thị kết quả
+                    if (AppState.steps.length > 0 && (!AppState.activeStepId || AppState.activeStepId === 'ROOT')) {
+                        AppState.activeStepId = AppState.steps[AppState.steps.length - 1].id;
+                    }
+
                     await recalculatePipeline();
+                    renderPipelineSteps();
                     renderConfigPanel(); 
                 } catch(e) {
                     alert("Lỗi đọc file: " + e.message);
@@ -622,17 +833,30 @@ function renderConfigPanel() {
 
     /** BƯỚC FILTER **/
     if (step.type === 'FILTER') {
-        // Luôn đảm bảo có ít nhất 1 dòng lọc nếu người dùng chưa cấu hình gì
         if (!step.config.conditions || step.config.conditions.length === 0) {
-            step.config.conditions = [{ col: availableHeaders[0] || "", op: "CONTAINS", val: "" }];
+            step.config.conditions = [{ col: availableHeaders[0] || "", op: "CONTAINS", val: "", val2: "" }];
         }
+        if (step.config.ignoreAccents === undefined) step.config.ignoreAccents = true;
+        if (step.config.caseSensitive === undefined) step.config.caseSensitive = false;
 
         dynamicPane.innerHTML = `
-            <div class="filter-logic-container">
-                <span class="logic-label">LOGIC:</span>
-                <div class="filter-logic-group" id="logic-group">
-                    <button class="btn-logic-toggle ${step.config.logicType === 'AND' ? 'active' : ''}" data-logic="AND">TẤT CẢ (AND)</button>
-                    <button class="btn-logic-toggle ${step.config.logicType === 'OR' ? 'active' : ''}" data-logic="OR">BẤT KỲ (OR)</button>
+            <div class="box-panel" style="margin-bottom:12px; padding:10px;">
+                <div class="filter-logic-container" style="margin-bottom:8px;">
+                    <span class="logic-label">QUY TẮC KHỚP:</span>
+                    <div class="filter-logic-group" id="logic-group">
+                        <button class="btn-logic-toggle ${step.config.logicType !== 'OR' ? 'active' : ''}" data-logic="AND">TẤT CẢ (AND)</button>
+                        <button class="btn-logic-toggle ${step.config.logicType === 'OR' ? 'active' : ''}" data-logic="OR">BẤT KỲ (OR)</button>
+                    </div>
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:12px; padding-top:4px; border-top:1px dashed var(--border); font-size:11px;">
+                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                        <input type="checkbox" id="filter-ignore-accents" ${step.config.ignoreAccents !== false ? 'checked' : ''}>
+                        <span>Bỏ qua dấu Tiếng Việt</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+                        <input type="checkbox" id="filter-case-sensitive" ${step.config.caseSensitive === true ? 'checked' : ''}>
+                        <span>Phân biệt HOA / thường</span>
+                    </label>
                 </div>
             </div>
 
@@ -646,10 +870,37 @@ function renderConfigPanel() {
 
         const renderConditions = () => {
             const list = document.getElementById('filter-conditions-list');
+            if (!list) return;
             list.innerHTML = "";
+
             step.config.conditions.forEach((cond, idx) => {
                 const item = document.createElement('div');
                 item.className = 'condition-item';
+
+                const isBetween = cond.op === 'BETWEEN';
+                const isEmptyCheck = cond.op === 'IS_EMPTY' || cond.op === 'NOT_EMPTY';
+                const isListCheck = cond.op === 'IN' || cond.op === 'NOT_IN';
+
+                let valueInputHtml = '';
+                if (isEmptyCheck) {
+                    valueInputHtml = `
+                        <div style="padding: 4px 8px; background: #f8fafc; border: 1px dashed var(--border); border-radius: 4px; font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+                            <span>${cond.op === 'IS_EMPTY' ? '⚪ Lọc các ô Rỗng / Trống' : '🟢 Lọc các ô Có Dữ Liệu'}</span>
+                        </div>
+                    `;
+                } else if (isBetween) {
+                    valueInputHtml = `
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+                            <input type="text" class="form-control cond-val" data-idx="${idx}" placeholder="Từ..." value="${cond.val || ""}" style="height:28px; padding:2px 8px; font-size:12px;" />
+                            <input type="text" class="form-control cond-val2" data-idx="${idx}" placeholder="Đến..." value="${cond.val2 || ""}" style="height:28px; padding:2px 8px; font-size:12px;" />
+                        </div>
+                    `;
+                } else {
+                    valueInputHtml = `
+                        <input type="text" class="form-control cond-val" data-idx="${idx}" placeholder="${isListCheck ? 'VD: Hà Nội, TP.HCM...' : 'Giá trị lọc...'}" value="${cond.val || ""}" style="height:28px; padding:2px 8px; font-size:12px;" />
+                    `;
+                }
+
                 item.innerHTML = `
                     <div style="display:flex; align-items:center; margin-bottom:6px;">
                         <span class="cond-index">${idx+1}</span>
@@ -659,17 +910,33 @@ function renderConfigPanel() {
                         </select>
                         <button class="btn-icon btn-del-cond" data-idx="${idx}" style="margin-left:6px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
                     </div>
-                    <div style="display:grid; grid-template-columns:100px 1fr; gap:6px;">
-                        <select class="form-control cond-op" data-idx="${idx}" style="height:28px; padding:2px 8px; font-size:12px;">
-                            <option value="CONTAINS" ${cond.op === 'CONTAINS' ? 'selected' : ''}>Chứa</option>
-                            <option value="EQUALS" ${cond.op === 'EQUALS' ? 'selected' : ''}>Bằng (=)</option>
-                            <option value="NOT_EQUALS" ${cond.op === 'NOT_EQUALS' ? 'selected' : ''}>Khác (!=)</option>
-                            <option value="STARTS_WITH" ${cond.op === 'STARTS_WITH' ? 'selected' : ''}>Bắt đầu</option>
-                            <option value="IN" ${cond.op === 'IN' ? 'selected' : ''}>List (IN)</option>
+                    <div style="display:grid; grid-template-columns:${isEmptyCheck ? '1fr' : '110px 1fr'}; gap:6px;">
+                        <select class="form-control cond-op" data-idx="${idx}" style="height:28px; padding:2px 6px; font-size:11px;">
+                            <optgroup label="📝 Văn bản">
+                                <option value="CONTAINS" ${cond.op === 'CONTAINS' ? 'selected' : ''}>Chứa</option>
+                                <option value="NOT_CONTAINS" ${cond.op === 'NOT_CONTAINS' ? 'selected' : ''}>Không chứa</option>
+                                <option value="EQUALS" ${cond.op === 'EQUALS' ? 'selected' : ''}>Bằng (=)</option>
+                                <option value="NOT_EQUALS" ${cond.op === 'NOT_EQUALS' ? 'selected' : ''}>Khác (!=)</option>
+                                <option value="STARTS_WITH" ${cond.op === 'STARTS_WITH' ? 'selected' : ''}>Bắt đầu bằng</option>
+                                <option value="ENDS_WITH" ${cond.op === 'ENDS_WITH' ? 'selected' : ''}>Kết thúc bằng</option>
+                                <option value="IN" ${cond.op === 'IN' ? 'selected' : ''}>Trong danh sách (IN)</option>
+                                <option value="NOT_IN" ${cond.op === 'NOT_IN' ? 'selected' : ''}>Ngoài danh sách (NOT IN)</option>
+                            </optgroup>
+                            <optgroup label="🔢 Số học & Ngày">
+                                <option value="GREATER_THAN" ${cond.op === 'GREATER_THAN' ? 'selected' : ''}>Lớn hơn (&gt;)</option>
+                                <option value="GREATER_EQUAL" ${cond.op === 'GREATER_EQUAL' ? 'selected' : ''}>Lớn hơn hoặc bằng (&gt;=)</option>
+                                <option value="LESS_THAN" ${cond.op === 'LESS_THAN' ? 'selected' : ''}>Nhỏ hơn (&lt;)</option>
+                                <option value="LESS_EQUAL" ${cond.op === 'LESS_EQUAL' ? 'selected' : ''}>Nhỏ hơn hoặc bằng (&lt;=)</option>
+                                <option value="BETWEEN" ${cond.op === 'BETWEEN' ? 'selected' : ''}>Trong khoảng (Từ... Đến...)</option>
+                            </optgroup>
+                            <optgroup label="⚪ Trạng thái ô">
+                                <option value="IS_EMPTY" ${cond.op === 'IS_EMPTY' ? 'selected' : ''}>Là ô trống (Rỗng)</option>
+                                <option value="NOT_EMPTY" ${cond.op === 'NOT_EMPTY' ? 'selected' : ''}>Có dữ liệu (Không rỗng)</option>
+                            </optgroup>
                         </select>
-                        <input type="text" class="form-control cond-val" data-idx="${idx}" placeholder="Giá trị..." value="${cond.val || ""}" style="height:28px; padding:2px 8px; font-size:12px;" />
+                        ${valueInputHtml}
                     </div>
-                    ${cond.op === 'IN' ? `<p style="font-size:9px; color:var(--primary); margin-top:4px;">* Dùng dấu phẩy hoặc chấm phẩy</p>` : ''}
+                    ${isListCheck ? `<p style="font-size:9px; color:var(--primary); margin-top:4px;">* Dùng dấu phẩy hoặc chấm phẩy để phân tách nhiều mục</p>` : ''}
                 `;
                 list.appendChild(item);
                 if (cond.col) item.querySelector('.cond-col').value = cond.col;
@@ -679,14 +946,21 @@ function renderConfigPanel() {
             list.querySelectorAll('.cond-col').forEach(el => el.addEventListener('change', (e) => {
                 step.config.conditions[e.target.dataset.idx].col = e.target.value;
                 recalculatePipeline();
+                renderPipelineSteps();
             }));
             list.querySelectorAll('.cond-op').forEach(el => el.addEventListener('change', (e) => {
                 step.config.conditions[e.target.dataset.idx].op = e.target.value;
                 recalculatePipeline();
                 renderConditions();
+                renderPipelineSteps();
             }));
             list.querySelectorAll('.cond-val').forEach(el => el.addEventListener('blur', (e) => {
                 step.config.conditions[e.target.dataset.idx].val = e.target.value;
+                recalculatePipeline();
+                renderPipelineSteps();
+            }));
+            list.querySelectorAll('.cond-val2').forEach(el => el.addEventListener('blur', (e) => {
+                step.config.conditions[e.target.dataset.idx].val2 = e.target.value;
                 recalculatePipeline();
                 renderPipelineSteps();
             }));
@@ -694,7 +968,7 @@ function renderConfigPanel() {
                 const idx = e.target.closest('button').dataset.idx;
                 step.config.conditions.splice(idx, 1);
                 recalculatePipeline();
-                renderConfigPanel();
+                renderConditions();
                 renderPipelineSteps();
             }));
         };
@@ -702,7 +976,7 @@ function renderConfigPanel() {
         renderConditions();
 
         document.getElementById('btn-add-condition').addEventListener('click', () => {
-            step.config.conditions.push({ col: availableHeaders[0] || "", op: "CONTAINS", val: "" });
+            step.config.conditions.push({ col: availableHeaders[0] || "", op: "CONTAINS", val: "", val2: "" });
             renderConditions();
         });
 
@@ -710,7 +984,7 @@ function renderConfigPanel() {
             if (confirm("Xoá tất cả điều kiện lọc?")) {
                 step.config.conditions = [];
                 recalculatePipeline();
-                renderConfigPanel();
+                renderConditions();
                 renderPipelineSteps();
             }
         });
@@ -718,10 +992,188 @@ function renderConfigPanel() {
         document.querySelectorAll('.btn-logic-toggle').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 step.config.logicType = e.target.dataset.logic;
+                document.querySelectorAll('.btn-logic-toggle').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
                 recalculatePipeline();
-                renderConfigPanel();
                 renderPipelineSteps();
             });
+        });
+
+        const chkAccents = document.getElementById('filter-ignore-accents');
+        if (chkAccents) {
+            chkAccents.addEventListener('change', (e) => {
+                step.config.ignoreAccents = e.target.checked;
+                recalculatePipeline();
+            });
+        }
+
+        const chkCase = document.getElementById('filter-case-sensitive');
+        if (chkCase) {
+            chkCase.addEventListener('change', (e) => {
+                step.config.caseSensitive = e.target.checked;
+                recalculatePipeline();
+            });
+        }
+    }
+
+    /** BƯỚC SORT **/
+    else if (step.type === 'SORT') {
+        if (!step.config.criteria || step.config.criteria.length === 0) {
+            step.config.criteria = [{ col: availableHeaders[0] || "", dir: "ASC", dataType: "AUTO" }];
+        }
+        if (step.config.nullPosition === undefined) step.config.nullPosition = 'LAST';
+        if (step.config.ignoreAccents === undefined) step.config.ignoreAccents = true;
+
+        dynamicPane.innerHTML = `
+            <div class="box-panel" style="margin-bottom:12px; padding:10px;">
+                <h4 style="font-size:12px; font-weight:700; color:var(--text-main); margin-bottom:4px;">↕️ Cấu Hình Sắp Xếp (Multi-Level Sort)</h4>
+                <p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">Hỗ trợ sắp xếp theo nhiều cột theo thứ tự ưu tiên. Tự động nhận diện Số, Chữ Tiếng Việt và Ngày tháng.</p>
+                
+                <div style="display:flex; flex-direction:column; gap:8px; padding-top:6px; border-top:1px dashed var(--border); font-size:11px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-weight:600; color:var(--text-muted);">Vị trí ô trống (Null/Rỗng):</span>
+                        <select id="sort-null-pos" class="form-control" style="width:130px; height:26px; padding:2px 6px; font-size:11px;">
+                            <option value="LAST" ${step.config.nullPosition !== 'FIRST' ? 'selected' : ''}>Đưa xuống cuối</option>
+                            <option value="FIRST" ${step.config.nullPosition === 'FIRST' ? 'selected' : ''}>Đưa lên đầu</option>
+                        </select>
+                    </div>
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <input type="checkbox" id="sort-ignore-accents" ${step.config.ignoreAccents !== false ? 'checked' : ''}>
+                        <span>Bỏ qua dấu Tiếng Việt khi sắp xếp chữ</span>
+                    </label>
+                </div>
+            </div>
+
+            <div id="sort-criteria-list"></div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:12px; border-top:1px dashed var(--border);">
+                <button class="btn btn-add" id="btn-add-sort-crit" style="flex:1; height:32px; font-size:11px; margin-right:8px;">+ THÊM CỘT SẮP XẾP</button>
+                <button class="btn-text-danger" id="btn-clear-sort-all" style="font-size:10px;">Xoá tất cả</button>
+            </div>
+        `;
+
+        const renderCriteria = () => {
+            const list = document.getElementById('sort-criteria-list');
+            if (!list) return;
+            list.innerHTML = "";
+
+            step.config.criteria.forEach((crit, idx) => {
+                const item = document.createElement('div');
+                item.className = 'condition-item sort-item';
+                item.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-size:11px; font-weight:700; color:${idx === 0 ? 'var(--primary)' : 'var(--text-muted)'}; display:flex; align-items:center; gap:4px;">
+                            <span class="badge ${idx === 0 ? 'badge-blue' : 'badge-gray'}" style="font-size:10px;">Ưu tiên ${idx + 1}</span>
+                            ${idx === 0 ? ' (Chính)' : ''}
+                        </span>
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            ${step.config.criteria.length > 1 ? `
+                                <button class="btn-icon btn-move-crit-up" data-idx="${idx}" title="Chuyển lên" ${idx === 0 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''} style="height:22px; width:22px;">▲</button>
+                                <button class="btn-icon btn-move-crit-down" data-idx="${idx}" title="Chuyển xuống" ${idx === step.config.criteria.length - 1 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''} style="height:22px; width:22px;">▼</button>
+                            ` : ''}
+                            <button class="btn-icon btn-del-crit" data-idx="${idx}" title="Xoá cột này" style="margin-left:4px; height:22px; width:22px; color:var(--danger);"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+                        </div>
+                    </div>
+
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                        <div>
+                            <select class="form-control sort-col" data-idx="${idx}" style="height:28px; padding:2px 8px; font-size:12px; font-weight:600; width:100%;">
+                                <option value="">-- Chọn cột cần sắp xếp --</option>
+                                ${optHtml}
+                            </select>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                            <button class="btn-sort-dir-toggle ${crit.dir === 'DESC' ? 'is-desc' : 'is-asc'}" data-idx="${idx}" type="button">
+                                ${crit.dir === 'DESC' ? '▼ Z → A (Giảm dần)' : '▲ A → Z (Tăng dần)'}
+                            </button>
+                            <select class="form-control sort-type" data-idx="${idx}" style="height:28px; padding:2px 6px; font-size:11px;">
+                                <option value="AUTO" ${crit.dataType === 'AUTO' ? 'selected' : ''}>⚡ Tự động</option>
+                                <option value="NUMBER" ${crit.dataType === 'NUMBER' ? 'selected' : ''}>🔢 Số học</option>
+                                <option value="TEXT" ${crit.dataType === 'TEXT' ? 'selected' : ''}>🔤 Chữ A-Z</option>
+                                <option value="DATE" ${crit.dataType === 'DATE' ? 'selected' : ''}>📅 Ngày tháng</option>
+                            </select>
+                        </div>
+                    </div>
+                `;
+                list.appendChild(item);
+                if (crit.col) item.querySelector('.sort-col').value = crit.col;
+            });
+
+            // Gắn sự kiện cho các điều kiện sắp xếp
+            list.querySelectorAll('.sort-col').forEach(el => el.addEventListener('change', (e) => {
+                step.config.criteria[e.target.dataset.idx].col = e.target.value;
+                recalculatePipeline();
+                renderPipelineSteps();
+            }));
+            list.querySelectorAll('.btn-sort-dir-toggle').forEach(el => el.addEventListener('click', (e) => {
+                const idx = e.target.dataset.idx;
+                const current = step.config.criteria[idx].dir || 'ASC';
+                step.config.criteria[idx].dir = current === 'ASC' ? 'DESC' : 'ASC';
+                renderCriteria();
+                recalculatePipeline();
+                renderPipelineSteps();
+            }));
+            list.querySelectorAll('.sort-type').forEach(el => el.addEventListener('change', (e) => {
+                step.config.criteria[e.target.dataset.idx].dataType = e.target.value;
+                recalculatePipeline();
+            }));
+            list.querySelectorAll('.btn-del-crit').forEach(el => el.addEventListener('click', (e) => {
+                const idx = parseInt(e.target.closest('button').dataset.idx);
+                step.config.criteria.splice(idx, 1);
+                recalculatePipeline();
+                renderCriteria();
+                renderPipelineSteps();
+            }));
+            list.querySelectorAll('.btn-move-crit-up').forEach(el => el.addEventListener('click', (e) => {
+                const idx = parseInt(e.target.closest('button').dataset.idx);
+                if (idx > 0) {
+                    const temp = step.config.criteria[idx];
+                    step.config.criteria[idx] = step.config.criteria[idx - 1];
+                    step.config.criteria[idx - 1] = temp;
+                    renderCriteria();
+                    recalculatePipeline();
+                    renderPipelineSteps();
+                }
+            }));
+            list.querySelectorAll('.btn-move-crit-down').forEach(el => el.addEventListener('click', (e) => {
+                const idx = parseInt(e.target.closest('button').dataset.idx);
+                if (idx < step.config.criteria.length - 1) {
+                    const temp = step.config.criteria[idx];
+                    step.config.criteria[idx] = step.config.criteria[idx + 1];
+                    step.config.criteria[idx + 1] = temp;
+                    renderCriteria();
+                    recalculatePipeline();
+                    renderPipelineSteps();
+                }
+            }));
+        };
+
+        renderCriteria();
+
+        document.getElementById('btn-add-sort-crit').addEventListener('click', () => {
+            step.config.criteria.push({ col: availableHeaders[0] || "", dir: "ASC", dataType: "AUTO" });
+            renderCriteria();
+            recalculatePipeline();
+            renderPipelineSteps();
+        });
+
+        document.getElementById('btn-clear-sort-all').addEventListener('click', () => {
+            if (confirm("Xoá tất cả cột sắp xếp?")) {
+                step.config.criteria = [];
+                renderCriteria();
+                recalculatePipeline();
+                renderPipelineSteps();
+            }
+        });
+
+        document.getElementById('sort-null-pos').addEventListener('change', (e) => {
+            step.config.nullPosition = e.target.value;
+            recalculatePipeline();
+        });
+
+        document.getElementById('sort-ignore-accents').addEventListener('change', (e) => {
+            step.config.ignoreAccents = e.target.checked;
+            recalculatePipeline();
         });
     }
 
@@ -1276,6 +1728,7 @@ function renderConfigPanel() {
                 uploadArea.style.display = 'block';
             } else if (val) {
                 uploadArea.style.display = 'none';
+                step.config.sourceSheet = val;
                 step.config.lookupData = AppState.rootFileCache.sheetsData[val].data;
                 step.config.grabColumns = []; // Reset cấu hình
                 document.getElementById('vlk-filename').innerText = `Thành công! Đã bốc data từ Tab: ${val}`;
@@ -1320,18 +1773,33 @@ function renderConfigPanel() {
         const fbHeaders = availableHeaders;
         const FN_CATS = [
             { cat: '⚙️ Điều kiện', color: '#7c3aed', fns: [
-                { n: 'IF',      tpl: 'IF(DK, "neu dung", "neu sai")',                      d: 'Nếu điều kiện → đúng/sai' },
-                { n: 'IFS',     tpl: 'IFS(DK1,"ket1", DK2,"ket2", "mac dinh")',           d: 'Nhiều điều kiện liên tiếp' },
-                { n: 'IFERROR', tpl: 'IFERROR(BIEU_THUC, "Loi")',                          d: 'Bắt lỗi, trả giá trị thay thế' },
-                { n: 'IFBLANK', tpl: 'IFBLANK(COT, "Trong")',                              d: 'Nếu rỗng thì trả giá trị thay thế' },
-                { n: 'SWITCH',  tpl: 'SWITCH(COT, "A","Loai 1", "B","Loai 2", "Khac")',   d: 'Khớp theo giá trị (giống CHOOSE)' },
+                { n: 'IF',         tpl: 'IF(DK, "neu dung", "neu sai")',                      d: 'Nếu điều kiện → đúng/sai' },
+                { n: 'IFS',        tpl: 'IFS(DK1,"ket1", DK2,"ket2", "mac dinh")',           d: 'Nhiều điều kiện liên tiếp' },
+                { n: 'IFERROR',    tpl: 'IFERROR(BIEU_THUC, "Loi")',                          d: 'Bắt lỗi, trả giá trị thay thế' },
+                { n: 'IFBLANK',    tpl: 'IFBLANK(COT, "Trong")',                              d: 'Nếu rỗng thì trả giá trị thay thế' },
+                { n: 'SWITCH',     tpl: 'SWITCH(COT, "A","Loai 1", "B","Loai 2", "Khac")',   d: 'Khớp theo giá trị' },
+                { n: 'COALESCE',   tpl: 'COALESCE(C1, C2, "Mac dinh")',                      d: 'Lấy giá trị không rỗng đầu tiên' },
             ]},
-            { cat: '📝 Chuỗi văn bản', color: '#059669', fns: [
+            { cat: '✂️ Tách & Rút Trích Chuỗi', color: '#059669', fns: [
+                { n: 'SPLIT',       tpl: 'SPLIT(COT, "_", 1)',            d: 'Tách chuỗi theo kí tự phân cách & lấy phần tử thứ N (dùng -1 để lấy phần tử cuối cùng)' },
+                { n: 'TEXTBEFORE',  tpl: 'TEXTBEFORE(COT, "_")',          d: 'Lấy phần chuỗi đứng TRƯỚC ký tự phân cách' },
+                { n: 'TEXTAFTER',   tpl: 'TEXTAFTER(COT, "_")',           d: 'Lấy phần chuỗi đứng SAU ký tự phân cách' },
+                { n: 'FIRSTWORD',   tpl: 'FIRSTWORD(COT)',                d: 'Lấy từ đầu tiên (Ví dụ: "Nguyễn Văn A" → "Nguyễn" [Họ])' },
+                { n: 'LASTWORD',    tpl: 'LASTWORD(COT)',                 d: 'Lấy từ cuối cùng (Ví dụ: "Nguyễn Văn A" → "A" [Tên])' },
+                { n: 'MIDDLEWORDS', tpl: 'MIDDLEWORDS(COT)',              d: 'Lấy các từ ở giữa (Ví dụ: "Nguyễn Văn A" → "Văn" [Tên đệm])' },
+                { n: 'NTHWORD',     tpl: 'NTHWORD(COT, 2)',               d: 'Lấy từ thứ N trong câu' },
+                { n: 'INITIALS',    tpl: 'INITIALS(COT)',                 d: 'Lấy chữ cái đầu các từ (Ví dụ: "Nguyễn Văn A" → "NVA")' },
+                { n: 'REGEXEXTRACT',tpl: 'REGEXEXTRACT(COT, "[A-Z]+\\d+")',d: 'Rút trích bằng Regex (ví dụ lấy mã, SĐT, email...)' },
+                { n: 'REGEXREPLACE',tpl: 'REGEXREPLACE(COT, "\\d+", "")', d: 'Thay thế bằng Regex' },
+                { n: 'REGEXMATCH',  tpl: 'REGEXMATCH(COT, "ABC")',        d: 'Kiểm tra khớp Regex (Trả về True/False)' },
+            ]},
+            { cat: '📝 Xử Lý Chuỗi', color: '#10b981', fns: [
                 { n: 'LEFT',        tpl: 'LEFT(COT, 5)',                 d: 'Lấy n ký tự bên trái' },
                 { n: 'RIGHT',       tpl: 'RIGHT(COT, 3)',                d: 'Lấy n ký tự bên phải' },
                 { n: 'MID',         tpl: 'MID(COT, 2, 4)',               d: 'Lấy từ vị trí bắt đầu, n ký tự' },
                 { n: 'LEN',         tpl: 'LEN(COT)',                     d: 'Đếm tổng số ký tự' },
                 { n: 'TRIM',        tpl: 'TRIM(COT)',                    d: 'Xóa khoảng trắng thừa 2 đầu và giữa' },
+                { n: 'CLEANTEXT',   tpl: 'CLEANTEXT(COT)',               d: 'Xóa ký tự ẩn xuống dòng & khoảng trắng thừa' },
                 { n: 'UPPER',       tpl: 'UPPER(COT)',                   d: 'Chuyển toàn bộ sang CHỮ HOA' },
                 { n: 'LOWER',       tpl: 'LOWER(COT)',                   d: 'Chuyển toàn bộ sang chữ thường' },
                 { n: 'PROPER',      tpl: 'PROPER(COT)',                  d: 'Viết Hoa Chữ Đầu Mỗi Từ' },
@@ -1358,11 +1826,12 @@ function renderConfigPanel() {
                 { n: 'ISBLANK',  tpl: 'ISBLANK(COT)',         d: 'Kiểm tra rỗng' },
                 { n: 'ISNUMBER', tpl: 'ISNUMBER(COT)',        d: 'Kiểm tra số' },
             ]},
-            { cat: '📅 Ngày Tháng', color: '#0891b2', fns: [
+            { cat: '📅 Ngày Tháng & Tuổi', color: '#0891b2', fns: [
                 { n: 'DATECONVERTPRO', tpl: 'DATECONVERTPRO(COT, "dd*mm*yyyy", "dd/mm/yyyy")', d: 'Chuyển định dạng thông minh — * khớp mọi ký tự phân cách (-, /, _, .). Trả "Error" nếu ngày tháng sai.' },
                 { n: 'DATECONVERT',tpl: 'DATECONVERT(COT, "dd/mm/yyyy", "mm-dd-yyyy")', d: 'Chuyển định dạng chủ động (Gốc → Mới)' },
                 { n: 'DATEFORMAT', tpl: 'DATEFORMAT(COT, "dd-MM-yyyy")', d: 'Đổi định dạng (Máy tự đoán ngày gốc)' },
                 { n: 'DATEDIF',    tpl: 'DATEDIF(C1, C2, "D")',             d: 'Khoảng cách ngày' },
+                { n: 'AGE',        tpl: 'AGE(COT)',                          d: 'Tính số tuổi chính xác từ ngày sinh' },
                 { n: 'TODAY',      tpl: 'TODAY()',                           d: 'Ngày hôm nay' },
                 { n: 'DAYS',       tpl: 'DAYS(C2, C1)',                     d: 'Số ngày chênh lệch' },
                 { n: 'ADDDAYS',    tpl: 'ADDDAYS(COT, 7)',                  d: 'Cộng thêm n ngày' },
@@ -1461,6 +1930,21 @@ function renderConfigPanel() {
                     IFERROR:(v,e)=>(v===null||v===undefined||String(v).startsWith('#'))?e:v,
                     IFBLANK:(v,e)=>(v===null||v===undefined||v==='')?e:v,
                     SWITCH:(val,...a)=>{for(let i=0;i<a.length-1;i+=2){if(val==a[i])return a[i+1];}return a[a.length-1];},
+                    SPLIT: (s,sep,i)=>{ if(s===null||s===undefined) return ''; const arr=String(s).split(sep!==undefined?String(sep):','); if(i===undefined||i===null||i===0) return arr.join(sep); const idx=Number(i); if(idx>0) return arr[idx-1]??''; if(idx<0) return arr[arr.length+idx]??''; return ''; },
+                    TEXTBEFORE: (s,sep,inst)=>{ if(s===null||s===undefined) return ''; const str=String(s); sep=String(sep??''); if(!sep) return str; inst=Number(inst||1); if(inst<0){ const last=str.lastIndexOf(sep); return last===-1?str:str.substring(0,last); } const parts=str.split(sep); if(parts.length<=1||inst>=parts.length) return str; return parts.slice(0,inst).join(sep); },
+                    TEXTAFTER: (s,sep,inst)=>{ if(s===null||s===undefined) return ''; const str=String(s); sep=String(sep??''); if(!sep) return ''; inst=Number(inst||1); if(inst<0){ const last=str.lastIndexOf(sep); return last===-1?'':str.substring(last+sep.length); } const parts=str.split(sep); if(parts.length<=inst) return ''; return parts.slice(inst).join(sep); },
+                    FIRSTWORD: (s)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); return p[0]||''; },
+                    LASTWORD: (s)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); return p.length?p[p.length-1]:''; },
+                    MIDDLEWORDS: (s)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); return p.length<=2?'':p.slice(1,p.length-1).join(' '); },
+                    NTHWORD: (s,n)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); const idx=Number(n||1); if(idx>0) return p[idx-1]||''; if(idx<0) return p[p.length+idx]||''; return ''; },
+                    INITIALS: (s)=>{ const str=_noAccent(String(s??'')).trim(); return !str?'':str.split(/\s+/).filter(Boolean).map(w=>w[0].toUpperCase()).join(''); },
+                    REGEXEXTRACT: (s,pat,grp)=>{ if(!s||!pat) return ''; try{ const rx=new RegExp(pat); const m=String(s).match(rx); if(!m) return ''; const g=Number(grp||0); return m[g]!==undefined?m[g]:m[0]; }catch(e){ return '#LỖI_REGEX'; } },
+                    REGEXREPLACE: (s,pat,rep)=>{ if(!s||!pat) return String(s??''); try{ const rx=new RegExp(pat,'g'); return String(s).replace(rx,String(rep??'')); }catch(e){ return '#LỖI_REGEX'; } },
+                    REGEXMATCH: (s,pat)=>{ if(!s||!pat) return false; try{ return new RegExp(pat,'i').test(String(s)); }catch(e){ return false; } },
+                    CLEANTEXT: (s)=>String(s??'').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim(),
+                    COALESCE: (...a)=>{ for(const v of a.flat()){ if(v!==null&&v!==undefined&&String(v).trim()!=='') return v; } return ''; },
+                    NVL: (...a)=>{ for(const v of a.flat()){ if(v!==null&&v!==undefined&&String(v).trim()!=='') return v; } return ''; },
+                    AGE: (v)=>{ const dt=_pd(v); if(!dt) return 0; const t=new Date(); let a=t.getFullYear()-dt.getFullYear(); const m=t.getMonth()-dt.getMonth(); if(m<0||(m===0&&t.getDate()<dt.getDate())) a--; return a<0?0:a; },
                     LEFT:(s,n)=>String(s??'').substring(0,n??1), RIGHT:(s,n)=>{const str=String(s??'');n=n??1;return str.substring(str.length-n);},
                     MID:(s,st,n)=>String(s??'').substring((st??1)-1,(st??1)-1+(n??1)), LEN:(s)=>String(s??'').length,
                     TRIM:(s)=>String(s??'').trim(), UPPER:(s)=>String(s??'').toUpperCase(), LOWER:(s)=>String(s??'').toLowerCase(),
@@ -1780,6 +2264,7 @@ function renderConfigPanel() {
                 cmpUploadArea.style.display = 'block';
             } else if (val) {
                 cmpUploadArea.style.display = 'none';
+                step.config.sourceSheet = val;
                 step.config.compareData = AppState.rootFileCache.sheetsData[val].data;
                 document.getElementById('cmp-filename').innerText = `Thành công! Đã bốc data từ Tab: ${val}`;
                 recalculatePipeline();

@@ -5,6 +5,148 @@ function removeVietnameseTones(str) {
     return str.toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
 
+function parseSortValue(val, dataType) {
+    if (val === null || val === undefined || String(val).trim() === '') {
+        return { isNull: true, num: null, str: '' };
+    }
+    const str = String(val).trim();
+    if (dataType === 'NUMBER') {
+        const clean = str.replace(/,/g, '');
+        const num = parseFloat(clean);
+        return { isNull: isNaN(num), isNumeric: !isNaN(num), num: isNaN(num) ? 0 : num, str };
+    }
+    if (dataType === 'DATE') {
+        let dt = null;
+        const num = parseFloat(str.replace(/,/g, ''));
+        if (!isNaN(num) && num > 10000 && num < 80000 && !str.includes('/') && !str.includes('-')) {
+            dt = new Date(Math.round((num - 25569) * 86400 * 1000)).getTime();
+        } else {
+            const parts = str.split(/[\/\-\.\s]+/).filter(x => x !== '');
+            if (parts.length >= 3) {
+                let d = parseInt(parts[0]), m = parseInt(parts[1]), y = parseInt(parts[2]);
+                if (y < 100) y += (y > 50 ? 1900 : 2000);
+                const parsed = new Date(y, m - 1, d);
+                if (!isNaN(parsed.getTime())) dt = parsed.getTime();
+            }
+            if (dt === null) {
+                const std = new Date(str).getTime();
+                if (!isNaN(std)) dt = std;
+            }
+        }
+        return { isNull: dt === null, isDate: dt !== null, num: dt || 0, str };
+    }
+    if (dataType === 'TEXT') {
+        return { isNull: false, isString: true, num: null, str };
+    }
+
+    // AUTO mode:
+    const cleanNum = str.replace(/,/g, '');
+    const num = parseFloat(cleanNum);
+    const isPureNumber = !isNaN(num) && !isNaN(cleanNum) && !(str.startsWith('0') && str.length > 1 && !str.includes('.'));
+    if (isPureNumber) {
+        return { isNull: false, isNumeric: true, num, str };
+    }
+
+    if ((str.includes('/') || str.includes('-')) && str.length >= 8 && str.length <= 19) {
+        const parts = str.split(/[\/\-\.\s]+/).filter(x => x !== '');
+        if (parts.length >= 3) {
+            let d = parseInt(parts[0]), m = parseInt(parts[1]), y = parseInt(parts[2]);
+            if (y > 1000 && d <= 31 && m <= 12) {
+                const parsed = new Date(y, m - 1, d);
+                if (!isNaN(parsed.getTime())) return { isNull: false, isDate: true, num: parsed.getTime(), str };
+            }
+        }
+    }
+    return { isNull: false, isString: true, num: null, str };
+}
+
+function compareSortCriteria(valA, valB, dir, dataType, nullPosition, ignoreAccents) {
+    const isNullA = (valA === null || valA === undefined || String(valA).trim() === '');
+    const isNullB = (valB === null || valB === undefined || String(valB).trim() === '');
+
+    if (isNullA && isNullB) return 0;
+    if (isNullA) return nullPosition === 'LAST' ? 1 : -1;
+    if (isNullB) return nullPosition === 'LAST' ? -1 : 1;
+
+    const parsedA = parseSortValue(valA, dataType);
+    const parsedB = parseSortValue(valB, dataType);
+
+    let cmp = 0;
+    if (dataType === 'NUMBER' || (dataType === 'AUTO' && parsedA.isNumeric && parsedB.isNumeric)) {
+        cmp = parsedA.num - parsedB.num;
+    } else if (dataType === 'DATE' || (dataType === 'AUTO' && parsedA.isDate && parsedB.isDate)) {
+        cmp = parsedA.num - parsedB.num;
+    } else {
+        let sA = parsedA.str;
+        let sB = parsedB.str;
+        if (ignoreAccents) {
+            sA = removeVietnameseTones(sA).toLowerCase();
+            sB = removeVietnameseTones(sB).toLowerCase();
+            cmp = sA.localeCompare(sB, 'vi', { numeric: true });
+        } else {
+            cmp = sA.localeCompare(sB, 'vi', { numeric: true, sensitivity: 'base' });
+        }
+    }
+    return dir === 'DESC' ? -cmp : cmp;
+}
+
+function evaluateFilterCondition(cellVal, cond, defaultIgnoreAccents, defaultCaseSensitive) {
+    const rawVal = (cellVal === null || cellVal === undefined) ? "" : String(cellVal).trim();
+    const op = cond.op || 'CONTAINS';
+
+    if (op === 'IS_EMPTY') return rawVal === "";
+    if (op === 'NOT_EMPTY') return rawVal !== "";
+
+    const ignoreAccents = cond.ignoreAccents !== undefined ? cond.ignoreAccents : defaultIgnoreAccents;
+    const caseSensitive = cond.caseSensitive !== undefined ? cond.caseSensitive : defaultCaseSensitive;
+
+    let v1 = rawVal;
+    let v2 = (cond.val === null || cond.val === undefined) ? "" : String(cond.val).trim();
+
+    if (ignoreAccents) {
+        v1 = removeVietnameseTones(v1);
+        v2 = removeVietnameseTones(v2);
+    }
+    if (!caseSensitive) {
+        v1 = v1.toUpperCase();
+        v2 = v2.toUpperCase();
+    }
+
+    if (op === 'CONTAINS') return v1.includes(v2);
+    if (op === 'NOT_CONTAINS') return !v1.includes(v2);
+    if (op === 'EQUALS' || op === '=') return v1 === v2;
+    if (op === 'NOT_EQUALS' || op === '!=') return v1 !== v2;
+    if (op === 'STARTS_WITH') return v1.startsWith(v2);
+    if (op === 'ENDS_WITH') return v1.endsWith(v2);
+    if (op === 'IN') {
+        const list = v2.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
+        return list.includes(v1);
+    }
+    if (op === 'NOT_IN') {
+        const list = v2.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
+        return !list.includes(v1);
+    }
+
+    const n1 = parseFloat(rawVal.replace(/,/g, ''));
+    const n2 = parseFloat(String(cond.val || "").replace(/,/g, ''));
+    const isNum = !isNaN(n1) && !isNaN(n2);
+
+    if (op === 'GREATER_THAN' || op === '>') return isNum ? n1 > n2 : v1 > v2;
+    if (op === 'GREATER_EQUAL' || op === '>=') return isNum ? n1 >= n2 : v1 >= v2;
+    if (op === 'LESS_THAN' || op === '<') return isNum ? n1 < n2 : v1 < v2;
+    if (op === 'LESS_EQUAL' || op === '<=') return isNum ? n1 <= n2 : v1 <= v2;
+    if (op === 'BETWEEN') {
+        const minVal = parseFloat(String(cond.val || "").replace(/,/g, ''));
+        const maxVal = parseFloat(String(cond.val2 || "").replace(/,/g, ''));
+        if (!isNaN(n1) && !isNaN(minVal) && !isNaN(maxVal)) {
+            return n1 >= minVal && n1 <= maxVal;
+        }
+        return false;
+    }
+
+    return false;
+}
+
 function checkSingleCondition(cellVal, op, targetVal) {
     const v1 = (cellVal === undefined || cellVal === null) ? "" : String(cellVal).trim();
     const v2 = (targetVal === undefined || targetVal === null) ? "" : String(targetVal).trim();
@@ -33,29 +175,48 @@ function checkSingleCondition(cellVal, op, targetVal) {
 function applyStepToData(sourceData, step) {
     // GUARD: Luôn đảm bảo sourceData là mảng
     let result = Array.isArray(sourceData) ? [...sourceData] : [];
-    const config = step.config;
+    const config = step.config || {};
     try {
         if (step.type === 'FILTER') {
             if (config.conditions && config.conditions.length > 0) {
                 const logicType = config.logicType || 'AND';
+                const defaultIgnoreAccents = config.ignoreAccents !== false;
+                const defaultCaseSensitive = config.caseSensitive === true;
                 result = result.filter(row => {
                     let matches = [];
                     for (const cond of config.conditions) {
-                        const cellVal = String(row[cond.col] || "").trim().toUpperCase();
-                        const filterVal = String(cond.val || "").trim().toUpperCase();
-                        let condMatch = false;
-                        if (cond.op === 'CONTAINS') condMatch = cellVal.includes(filterVal);
-                        else if (cond.op === 'EQUALS') condMatch = (cellVal === filterVal);
-                        else if (cond.op === 'NOT_EQUALS') condMatch = (cellVal !== filterVal);
-                        else if (cond.op === 'STARTS_WITH') condMatch = cellVal.startsWith(filterVal);
-                        else if (cond.op === 'IN') {
-                            const list = filterVal.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
-                            condMatch = list.includes(cellVal);
-                        }
+                        if (!cond.col) continue;
+                        const cellVal = row[cond.col];
+                        const condMatch = evaluateFilterCondition(cellVal, cond, defaultIgnoreAccents, defaultCaseSensitive);
                         matches.push(condMatch);
                     }
+                    if (matches.length === 0) return true;
                     return logicType === 'OR' ? matches.some(m => m === true) : matches.every(m => m === true);
                 });
+            }
+        } else if (step.type === 'SORT') {
+            if (config.criteria && config.criteria.length > 0) {
+                const validCriteria = config.criteria.filter(c => c && c.col);
+                if (validCriteria.length > 0) {
+                    const nullPos = config.nullPosition || 'LAST';
+                    const ignoreAcc = config.ignoreAccents !== false;
+                    result.sort((rowA, rowB) => {
+                        for (const crit of validCriteria) {
+                            const valA = rowA[crit.col];
+                            const valB = rowB[crit.col];
+                            const cmp = compareSortCriteria(
+                                valA, 
+                                valB, 
+                                crit.dir || 'ASC', 
+                                crit.dataType || 'AUTO', 
+                                nullPos, 
+                                ignoreAcc
+                            );
+                            if (cmp !== 0) return cmp;
+                        }
+                        return 0;
+                    });
+                }
             }
         } else if (step.type === 'MATH_COMPUTE') {
             const newCol = (config.newColName && config.newColName.trim() !== '') ? config.newColName : 'Kết Quả';
@@ -413,7 +574,7 @@ function applyStepToData(sourceData, step) {
                     IFERROR: (v,e)=>(v===null||v===undefined||String(v).startsWith('#'))?e:v,
                     IFBLANK: (v,e)=>(v===null||v===undefined||v==='')?e:v,
                     SWITCH: (val,...a)=>{ for(let i=0;i<a.length-1;i+=2){if(val==a[i])return a[i+1];} return a[a.length-1]; },
-                    // === CHUỖI ===
+                    // === CHUỖI & TÁCH CHUỖI NÂNG CAO ===
                     LEFT: (s,n)=>String(s??'').substring(0,n??1),
                     RIGHT: (s,n)=>{ const str=String(s??''); n=n??1; return str.substring(str.length-n); },
                     MID: (s,st,n)=>String(s??'').substring((st??1)-1,(st??1)-1+(n??1)),
@@ -438,10 +599,24 @@ function applyStepToData(sourceData, step) {
                     CLEAN: s=>String(s??'').replace(/[\x00-\x1F]/g,''),
                     PADLEFT: (s,n,c)=>String(s??'').padStart(n??0, c??'0'),
                     PADRIGHT: (s,n,c)=>String(s??'').padEnd(n??0, c??' '),
-                    SPLIT: (s,sep,i)=>{ const arr=String(s??'').split(sep??','); return i!=null ? (arr[i-1]??'') : arr; },
+                    SPLIT: (s,sep,i)=>{ if(s===null||s===undefined) return ''; const arr=String(s).split(sep!==undefined?String(sep):','); if(i===undefined||i===null||i===0) return arr.join(sep); const idx=Number(i); if(idx>0) return arr[idx-1]??''; if(idx<0) return arr[arr.length+idx]??''; return ''; },
+                    TEXTBEFORE: (s,sep,inst)=>{ if(s===null||s===undefined) return ''; const str=String(s); sep=String(sep??''); if(!sep) return str; inst=Number(inst||1); if(inst<0){ const last=str.lastIndexOf(sep); return last===-1?str:str.substring(0,last); } const parts=str.split(sep); if(parts.length<=1||inst>=parts.length) return str; return parts.slice(0,inst).join(sep); },
+                    TEXTAFTER: (s,sep,inst)=>{ if(s===null||s===undefined) return ''; const str=String(s); sep=String(sep??''); if(!sep) return ''; inst=Number(inst||1); if(inst<0){ const last=str.lastIndexOf(sep); return last===-1?'':str.substring(last+sep.length); } const parts=str.split(sep); if(parts.length<=inst) return ''; return parts.slice(inst).join(sep); },
+                    FIRSTWORD: (s)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); return p[0]||''; },
+                    LASTWORD: (s)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); return p.length?p[p.length-1]:''; },
+                    MIDDLEWORDS: (s)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); return p.length<=2?'':p.slice(1,p.length-1).join(' '); },
+                    NTHWORD: (s,n)=>{ const p=String(s??'').trim().split(/\s+/).filter(Boolean); const idx=Number(n||1); if(idx>0) return p[idx-1]||''; if(idx<0) return p[p.length+idx]||''; return ''; },
+                    INITIALS: (s)=>{ const str=_noAccent(String(s??'')).trim(); return !str?'':str.split(/\s+/).filter(Boolean).map(w=>w[0].toUpperCase()).join(''); },
+                    REGEXEXTRACT: (s,pat,grp)=>{ if(!s||!pat) return ''; try{ const rx=new RegExp(pat); const m=String(s).match(rx); if(!m) return ''; const g=Number(grp||0); return m[g]!==undefined?m[g]:m[0]; }catch(e){ return '#LỖI_REGEX'; } },
+                    REGEXREPLACE: (s,pat,rep)=>{ if(!s||!pat) return String(s??''); try{ const rx=new RegExp(pat,'g'); return String(s).replace(rx,String(rep??'')); }catch(e){ return '#LỖI_REGEX'; } },
+                    REGEXMATCH: (s,pat)=>{ if(!s||!pat) return false; try{ return new RegExp(pat,'i').test(String(s)); }catch(e){ return false; } },
+                    CLEANTEXT: (s)=>String(s??'').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim(),
+                    COALESCE: (...a)=>{ for(const v of a.flat()){ if(v!==null&&v!==undefined&&String(v).trim()!=='') return v; } return ''; },
+                    NVL: (...a)=>{ for(const v of a.flat()){ if(v!==null&&v!==undefined&&String(v).trim()!=='') return v; } return ''; },
+                    AGE: (v)=>{ const dt=_pd(v); if(!dt) return 0; const t=new Date(); let a=t.getFullYear()-dt.getFullYear(); const m=t.getMonth()-dt.getMonth(); if(m<0||(m===0&&t.getDate()<dt.getDate())) a--; return a<0?0:a; },
                     REMOVEACCENTS: s=>_noAccent(s),
                     REMOVEVN: s=>_noAccent(s),
-                    EXTRACTNUM: s=>{ const m=String(s??'').match(/[\d.,]+/g); return m?parseFloat(m.join('').replace(/,/g,'')):0; },
+                    EXTRACTNUM: s=>{ const m=String(s??'').match(/-?\d+(?:\.\d+)?/g); return m?parseFloat(m.join('')):0; },
                     EXTRACTTEXT: s=>String(s??'').replace(/[0-9.,\-+]/g,'').trim(),
                     CONTAINS: (s,sub)=>String(s??'').includes(String(sub??'')),
                     STARTSWITH: (s,pre)=>String(s??'').startsWith(String(pre??'')),
@@ -577,6 +752,10 @@ function _sanitizeCellVal(val) {
 }
 
 const WORKER_CODE = `
+    const removeVietnameseTones = ${removeVietnameseTones.toString()};
+    const parseSortValue = ${parseSortValue.toString()};
+    const compareSortCriteria = ${compareSortCriteria.toString()};
+    const evaluateFilterCondition = ${evaluateFilterCondition.toString()};
     const checkSingleCondition = ${checkSingleCondition.toString()};
     const applyStepToData = ${applyStepToData.toString()};
 
@@ -586,20 +765,42 @@ const WORKER_CODE = `
 
         try {
             if (e.data.type === 'INIT') {
-                // CHỈ NẠP XLSX (SheetJS) - ổn định trong blob Worker
-                importScripts(e.data.basePath + '/xlsx.full.min.js');
+                // CHỈ NẠP XLSX (SheetJS) nếu chạy trên môi trường http/https (tránh lỗi file:/// bị trình duyệt chặn CORS)
+                try {
+                    const isFileProtocol = (e.data.basePath && e.data.basePath.startsWith('file:')) || (typeof location !== 'undefined' && location.protocol === 'file:');
+                    if (!isFileProtocol && typeof importScripts === 'function') {
+                        importScripts(e.data.basePath + '/xlsx.full.min.js');
+                    }
+                } catch(err) {
+                    // Im lặng bỏ qua lỗi importScripts vì pipeline engine không cần XLSX để tính toán
+                }
                 self.postMessage({ type: 'INIT_SUCCESS' });
 
             } else if (e.data.type === 'APPLY_PIPELINE') {
                 const { steps, fullData } = e.data;
                 let res = Array.isArray(fullData) ? [...fullData] : [];
-                for (const s of steps) { if (!s.disabled) res = applyStepToData(res, s); }
+                const stepPreviews = {};
+                for (const s of steps) {
+                    if (!s.disabled) res = applyStepToData(res, s);
+                    stepPreviews[s.id] = res.slice(0, 1000);
+                }
                 self.processedData = res;
-                self.postMessage({ type: 'PIPELINE_SUCCESS', msgId, totalRows: res.length, previewData: res.slice(0, 1000) });
+                self.postMessage({ 
+                    type: 'PIPELINE_SUCCESS', 
+                    msgId, 
+                    totalRows: res.length, 
+                    previewData: res.slice(0, 1000),
+                    stepPreviews 
+                });
 
             } else if (e.data.type === 'EXPORT_FINAL') {
-                // DÙNG XLSX (SheetJS) để tạo file - KHÔNG dùng ExcelJS vì không load được ổn định trong blob Worker
+                // DÙNG XLSX (SheetJS) để tạo file
                 if (!self.processedData || self.processedData.length === 0) throw new Error('Không có dữ liệu để xuất.');
+                if (typeof XLSX === 'undefined') {
+                    // Nếu Worker không nạp được XLSX (do chạy trên file:///), báo main-thread xuất trực tiếp bằng window.XLSX
+                    self.postMessage({ type: 'NEED_MAIN_EXPORT', msgId, processedData: self.processedData });
+                    return;
+                }
                 const headerSet = new Set();
                 self.processedData.forEach(row => {
                     Object.keys(row).forEach(k => {
@@ -617,16 +818,12 @@ const WORKER_CODE = `
                 const ws = XLSX.utils.aoa_to_sheet(rows);
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, ws, 'Data');
-                // XLSX.write type:'array' trả về plain Array, phải bọc trong Uint8Array mới có .buffer
                 const arr = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
                 const buffer = new Uint8Array(arr).buffer;
                 self.postMessage({ type: 'EXPORT_SUCCESS', msgId, buffer }, [buffer]);
             } else if (e.data.type === 'GET_PROCESSED_DATA') {
                 self.postMessage({ type: 'GET_PROCESSED_DATA_SUCCESS', msgId, processedData: self.processedData });
             } else if (e.data.type === 'EXTRACT_SHEET') {
-                // Logic trích xuất sheet từ buffer đã nạp (nếu cần) hoặc data có sẵn
-                // Tuy nhiên trong kiến trúc hiện tại, fullData thường được gửi kèm.
-                // Nếu app-studio gọi extractSheet, ta cần đảm bảo nó trả về đúng format.
                 self.postMessage({ type: 'EXTRACT_SUCCESS', msgId, data: [], headers: [] });
             }
         } catch(err) {
@@ -639,20 +836,29 @@ class ExcelWorkerAPI {
     constructor() {
         this.callbacks = new Map();
         this.msgCounter = 0;
-        this.basePath = location.href.substring(0, location.href.lastIndexOf('/'));
+        this.basePath = (typeof location !== 'undefined' && location.href) 
+            ? location.href.substring(0, location.href.lastIndexOf('/')) 
+            : '';
+        this.hasWorker = false;
+        this.fallbackProcessedData = [];
         try {
             const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
             this.worker = new Worker(URL.createObjectURL(blob));
             this.worker.onmessage = (e) => this.handleMessage(e.data);
-            this.worker.onerror = (e) => console.error('Worker error:', e);
+            this.worker.onerror = (e) => {
+                console.warn('Worker error/blocked, switching to main thread:', e);
+                this.hasWorker = false;
+            };
+            this.hasWorker = true;
         } catch (e) {
-            console.error("Worker init failed:", e);
+            console.warn("Worker creation failed, fallback to main thread:", e);
+            this.hasWorker = false;
         }
     }
 
     handleMessage(data) {
         if (data.type === 'ERROR') {
-            alert("Lỗi: " + data.error);
+            console.error("Worker error:", data.error);
             if (data.msgId && this.callbacks.has(data.msgId)) {
                 this.callbacks.get(data.msgId).reject(new Error(data.error));
                 this.callbacks.delete(data.msgId);
@@ -661,17 +867,51 @@ class ExcelWorkerAPI {
             if (this.initResolve) this.initResolve();
         } else if (data.type === 'PIPELINE_SUCCESS') {
             const cb = this.callbacks.get(data.msgId);
-            if (cb) { cb.resolve({ previewData: data.previewData, totalRows: data.totalRows }); this.callbacks.delete(data.msgId); }
+            if (cb) { cb.resolve({ previewData: data.previewData, totalRows: data.totalRows, stepPreviews: data.stepPreviews }); this.callbacks.delete(data.msgId); }
         } else if (data.type === 'EXPORT_SUCCESS') {
             const cb = this.callbacks.get(data.msgId);
             if (cb) { cb.resolve(data.buffer); this.callbacks.delete(data.msgId); }
+        } else if (data.type === 'NEED_MAIN_EXPORT') {
+            const cb = this.callbacks.get(data.msgId);
+            if (cb) {
+                try {
+                    const buf = this.exportWithMainThreadXLSX(data.processedData || []);
+                    cb.resolve(buf);
+                } catch(e) { cb.reject(e); }
+                this.callbacks.delete(data.msgId);
+            }
         } else if (data.type === 'GET_PROCESSED_DATA_SUCCESS') {
             const cb = this.callbacks.get(data.msgId);
             if (cb) { cb.resolve(data.processedData); this.callbacks.delete(data.msgId); }
         }
     }
 
+    exportWithMainThreadXLSX(processedData) {
+        if (!processedData || processedData.length === 0) throw new Error('Không có dữ liệu để xuất.');
+        if (typeof XLSX === 'undefined') throw new Error('Thư viện SheetJS chưa được tải.');
+        const headerSet = new Set();
+        processedData.forEach(row => {
+            Object.keys(row).forEach(k => {
+                if (k !== '__original_row_idx__') headerSet.add(k);
+            });
+        });
+        const headers = Array.from(headerSet);
+        const rows = [headers];
+        for (let i = 0; i < processedData.length; i++) {
+            rows.push(headers.map(h => {
+                const v = processedData[i][h];
+                return (v === null || v === undefined) ? '' : v;
+            }));
+        }
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Data');
+        const arr = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+        return new Uint8Array(arr).buffer;
+    }
+
     async init() {
+        if (!this.hasWorker) return Promise.resolve();
         return new Promise((res) => {
             this.initResolve = res;
             this.worker.postMessage({ type: 'INIT', basePath: this.basePath });
@@ -679,11 +919,24 @@ class ExcelWorkerAPI {
     }
 
     async runPipeline(steps, fullData) {
+        if (!this.hasWorker) {
+            let res = Array.isArray(fullData) ? [...fullData] : [];
+            const stepPreviews = {};
+            for (const s of steps) {
+                if (!s.disabled) res = applyStepToData(res, s);
+                stepPreviews[s.id] = res.slice(0, 1000);
+            }
+            this.fallbackProcessedData = res;
+            return Promise.resolve({
+                previewData: res.slice(0, 1000),
+                totalRows: res.length,
+                stepPreviews
+            });
+        }
         return new Promise((res, rej) => {
             const msgId = 'm' + (++this.msgCounter);
             this.callbacks.set(msgId, { resolve: res, reject: rej });
             try {
-                // SheetJS trả về dữ liệu plain JS thuần, không cần sanitize ExcelJS objects
                 const safeSteps = JSON.parse(JSON.stringify(steps));
                 this.worker.postMessage({ type: 'APPLY_PIPELINE', msgId, steps: safeSteps, fullData: fullData || [] });
             } catch (e) {
@@ -693,6 +946,9 @@ class ExcelWorkerAPI {
     }
 
     async exportFinal() {
+        if (!this.hasWorker) {
+            return Promise.resolve(this.exportWithMainThreadXLSX(this.fallbackProcessedData));
+        }
         return new Promise((res, rej) => {
             const msgId = 'm' + (++this.msgCounter);
             this.callbacks.set(msgId, { resolve: res, reject: rej });
@@ -701,6 +957,9 @@ class ExcelWorkerAPI {
     }
 
     async getProcessedData() {
+        if (!this.hasWorker) {
+            return Promise.resolve(this.fallbackProcessedData);
+        }
         return new Promise((res, rej) => {
             const msgId = 'm' + (++this.msgCounter);
             this.callbacks.set(msgId, { resolve: res, reject: rej });
@@ -716,7 +975,11 @@ class ExcelWorkerAPI {
         return extractSheetData(buffer, sheetName, headerIdx);
     }
 
-    terminate() { if (this.worker) this.worker.terminate(); }
+    terminate() { 
+        if (this.worker && this.hasWorker) {
+            try { this.worker.terminate(); } catch(e) {}
+        }
+    }
 }
 
 // ==========================================
