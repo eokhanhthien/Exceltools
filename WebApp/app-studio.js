@@ -12,6 +12,34 @@ const AppState = {
     cachedResults: new Map() // ID Bước -> Dữ liệu đầu ra của bước đó (Tối ưu RAM)
 };
 
+// --- QUẢN LÝ DỮ LIỆU SHEET THÔNG MINH & CACHE LAZY ---
+function getOrLoadSheetData(sheetName, headerIdx = 0, limit = null) {
+    if (!AppState.rootFileCache) return { headers: [], data: [], fullData: [], totalRows: 0 };
+    if (!AppState.rootFileCache.sheetsData) AppState.rootFileCache.sheetsData = {};
+
+    const cacheKey = `${sheetName}_h${headerIdx}`;
+    if (!AppState.rootFileCache._parsedCache) AppState.rootFileCache._parsedCache = {};
+
+    if (AppState.rootFileCache._parsedCache[cacheKey]) {
+        const cached = AppState.rootFileCache._parsedCache[cacheKey];
+        AppState.rootFileCache.sheetsData[sheetName] = cached;
+        return cached;
+    }
+
+    // Tận dụng workbook đã có trong RAM (_wb) thay vì parse lại ArrayBuffer
+    const source = AppState.rootFileCache._wb || AppState.rootFileCache.originalBuffer;
+    const result = extractSheetData(source, sheetName, headerIdx, limit);
+
+    AppState.rootFileCache._parsedCache[cacheKey] = result;
+    AppState.rootFileCache.sheetsData[sheetName] = result;
+    return result;
+}
+
+// Expose ra window để các module có thể gọi
+if (typeof window !== 'undefined') {
+    window.getOrLoadSheetData = getOrLoadSheetData;
+}
+
 // --- AUTO-SAVE (LOCAL STORAGE) ---
 function saveStateToLocal() {
     try {
@@ -240,10 +268,14 @@ async function recalculatePipeline(silent = false) {
     if (pipelineContainer && !silent) pipelineContainer.classList.add('is-calculating');
     
     try {
-        const fullData = AppState.rootFileCache.sheetsData[AppState.rootSelectedSheet].fullData;
+        const currentSheet = AppState.rootSelectedSheet || (AppState.rootFileCache.sheetNames && AppState.rootFileCache.sheetNames[0]);
+        const sheetInfo = getOrLoadSheetData(currentSheet, AppState.rootHeaderRowIndex || 0);
+        const fullData = sheetInfo.fullData || AppState.rootData || [];
+        AppState.rootTotalRows = sheetInfo.totalRows || fullData.length;
         
         // Gọi Worker chạy Pipeline trên TOÀN BỘ dữ liệu để đảm bảo chính xác 100%
         const result = await AppState.rootFileCache.workerApi.runPipeline(AppState.steps, fullData);
+        AppState.pipelineTotalRows = result.totalRows;
         
         // Cập nhật Cache kết quả từng bước (đã được Worker tính toán)
         if (result.stepPreviews) {
@@ -419,18 +451,45 @@ function getHeadersAtCurrentStep() {
 }
 
 // =============================================
-// RENDER DATA TABLE — Giống test.html, không cần thư viện
+// RENDER DATA TABLE — Siêu tốc, mượt mà cho dữ liệu lớn (>20k dòng)
 // =============================================
 
 // Cache dữ liệu đang hiển thị để search filter hoạt động
 let _currentRenderData = [];
 let _currentHeaders = [];
+let _renderedRowCount = 0;
+const RENDER_BATCH_SIZE = 100;
+const MAX_PREVIEW_LIMIT = 1000;
 
-// Hàm render table (tách riêng để search gọi lại được)
-function _renderTableRows(data, headers) {
+function _escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    const s = String(str);
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _buildRowHtml(row, rowIdx, headers, isRoot) {
+    let html = `<tr data-row-idx="${rowIdx}">`;
+    const editableAttr = isRoot ? ' contenteditable="true"' : '';
+    for (let c = 0; c < headers.length; c++) {
+        const h = headers[c];
+        const val = (row[h] !== undefined && row[h] !== null) ? String(row[h]) : '';
+        html += `<td data-col="${_escapeHtml(h)}"${editableAttr}>${_escapeHtml(val)}</td>`;
+    }
+    html += '</tr>';
+    return html;
+}
+
+// Hàm render table (dùng HTML string ghép batch siêu tốc + cuộn nạp tiếp)
+function _renderTableRows(data, headers, append = false) {
     const tbody = document.getElementById('data-tbody');
     if (!tbody) return;
-    tbody.innerHTML = '';
+
+    if (!append) {
+        tbody.innerHTML = '';
+        _renderedRowCount = 0;
+        const wrapper = document.getElementById('data-table-wrapper');
+        if (wrapper) wrapper.scrollTop = 0;
+    }
 
     if (!data || data.length === 0) {
         tbody.innerHTML = `<tr><td colspan="${headers.length || 1}" style="text-align:center;padding:40px;color:#9ca3af;">Không có dữ liệu</td></tr>`;
@@ -438,69 +497,128 @@ function _renderTableRows(data, headers) {
     }
 
     const isRoot = AppState.activeStepId === 'ROOT';
-    const limit = Math.min(1000, data.length);
+    const totalToRender = Math.min(MAX_PREVIEW_LIMIT, data.length);
+    const start = _renderedRowCount;
+    const end = Math.min(start + RENDER_BATCH_SIZE, totalToRender);
 
-    for (let i = 0; i < limit; i++) {
-        const row = data[i];
-        const tr = document.createElement('tr');
+    if (start >= end) return;
 
-        headers.forEach(h => {
-            const td = document.createElement('td');
-            const val = (row[h] !== undefined && row[h] !== null) ? String(row[h]) : '';
-            td.innerText = val;
-
-            // Cho phép edit trực tiếp ở ROOT (giống test.html)
-            if (isRoot) {
-                td.contentEditable = true;
-                td.addEventListener('blur', function () {
-                    row[h] = td.innerText;
-                    // Cập nhật lại fullData trong cache
-                    if (AppState.rootFileCache && AppState.rootSelectedSheet) {
-                        const sd = AppState.rootFileCache.sheetsData[AppState.rootSelectedSheet];
-                        if (sd) {
-                            const idx = AppState.rootData.indexOf(row);
-                            if (idx >= 0 && sd.fullData) sd.fullData[idx] = row;
-                        }
-                    }
-                    setTimeout(() => recalculatePipeline(), 50);
-                });
-            }
-
-            tr.appendChild(td);
-        });
-
-        tbody.appendChild(tr);
+    let rowsHtml = '';
+    for (let i = start; i < end; i++) {
+        rowsHtml += _buildRowHtml(data[i], i, headers, isRoot);
     }
+
+    if (append) {
+        tbody.insertAdjacentHTML('beforeend', rowsHtml);
+    } else {
+        tbody.innerHTML = rowsHtml;
+    }
+
+    _renderedRowCount = end;
 }
 
-// Khởi tạo search
+// Bắt sự kiện cuộn vô tận mượt mà cho bảng
+function _initTableScroll() {
+    const wrapper = document.getElementById('data-table-wrapper');
+    if (!wrapper || wrapper.dataset.scrollBound) return;
+    wrapper.dataset.scrollBound = '1';
+
+    wrapper.addEventListener('scroll', () => {
+        if (!_currentRenderData || _currentRenderData.length === 0) return;
+        const totalToRender = Math.min(MAX_PREVIEW_LIMIT, _currentRenderData.length);
+        if (_renderedRowCount >= totalToRender) return;
+
+        // Nếu cuộn gần chạm đáy (còn 200px)
+        if (wrapper.scrollTop + wrapper.clientHeight >= wrapper.scrollHeight - 200) {
+            _renderTableRows(_currentRenderData, _currentHeaders, true);
+        }
+    }, { passive: true });
+}
+
+// Event delegation cho chỉnh sửa ô trực tiếp (chỉ 1 listener duy nhất thay vì 30,000 listener)
+function _initTableEditing() {
+    const tbody = document.getElementById('data-tbody');
+    if (!tbody || tbody.dataset.editBound) return;
+    tbody.dataset.editBound = '1';
+
+    tbody.addEventListener('focusout', (e) => {
+        const td = e.target.closest('td[contenteditable="true"]');
+        if (!td) return;
+        const tr = td.closest('tr');
+        if (!tr) return;
+        const rowIdx = parseInt(tr.dataset.rowIdx, 10);
+        const col = td.dataset.col;
+        if (isNaN(rowIdx) || !col || !_currentRenderData) return;
+
+        const row = _currentRenderData[rowIdx];
+        if (!row) return;
+
+        const newVal = td.innerText;
+        if (row[col] === newVal) return; // Không thay đổi
+
+        row[col] = newVal;
+
+        // Cập nhật lại fullData trong cache của sheet hiện tại
+        if (AppState.rootFileCache && AppState.rootSelectedSheet) {
+            const sd = AppState.rootFileCache.sheetsData[AppState.rootSelectedSheet];
+            if (sd && sd.fullData) {
+                const rootIdx = AppState.rootData.indexOf(row);
+                if (rootIdx >= 0) sd.fullData[rootIdx] = row;
+            }
+        }
+
+        setTimeout(() => recalculatePipeline(), 50);
+    });
+}
+
+// Khởi tạo search với debounce tránh giật lag khi gõ từ khoá
+let _searchTimer = null;
 function _initTableSearch() {
     const input = document.getElementById('table-search');
     if (!input || input.dataset.bound) return;
     input.dataset.bound = '1';
+
     input.addEventListener('input', function () {
+        clearTimeout(_searchTimer);
         const kw = this.value.toLowerCase().trim();
-        if (!kw) {
-            _renderTableRows(_currentRenderData, _currentHeaders);
-            return;
-        }
-        const filtered = _currentRenderData.filter(row =>
-            _currentHeaders.some(h => String(row[h] ?? '').toLowerCase().includes(kw))
-        );
-        _renderTableRows(filtered, _currentHeaders);
+        _searchTimer = setTimeout(() => {
+            if (!kw) {
+                _renderTableRows(_currentRenderData, _currentHeaders);
+                return;
+            }
+            const filtered = _currentRenderData.filter(row =>
+                _currentHeaders.some(h => String(row[h] ?? '').toLowerCase().includes(kw))
+            );
+            _renderTableRows(filtered, _currentHeaders);
+        }, 150);
     });
 }
 
 function renderPreviewAtActiveStep() {
     let activeData;
+
     if (AppState.activeStepId === 'ROOT') {
         activeData = AppState.rootData;
     } else {
         activeData = AppState.cachedResults.get(AppState.activeStepId);
-        if ((!activeData || activeData.length === 0) && AppState.cachedResults.size > 0) {
-            activeData = Array.from(AppState.cachedResults.values()).pop();
+        if (!activeData || activeData.length === 0) {
+            // Tìm bước liền trước gần nhất có cache hợp lệ
+            const stepIdx = AppState.steps.findIndex(s => s.id === AppState.activeStepId);
+            if (stepIdx > 0) {
+                for (let i = stepIdx - 1; i >= 0; i--) {
+                    const prev = AppState.cachedResults.get(AppState.steps[i].id);
+                    if (prev && prev.length > 0) {
+                        activeData = prev;
+                        break;
+                    }
+                }
+            }
+            if (!activeData || activeData.length === 0) {
+                activeData = AppState.rootData;
+            }
         }
     }
+
     let renderData = (activeData && activeData.length > 0) ? activeData : (AppState.rootData || []);
     const headers = renderData.length > 0
         ? Object.keys(renderData[0]).filter(k => k !== '__original_row_idx__')
@@ -536,9 +654,9 @@ function renderPreviewAtActiveStep() {
 
             th.innerHTML = `
                 <div class="th-content-wrapper">
-                    <span class="th-title-text" title="${h}">${h}</span>
+                    <span class="th-title-text" title="${_escapeHtml(h)}">${_escapeHtml(h)}</span>
                     ${sortBadge}
-                    <button class="th-menu-trigger" data-col="${h}" title="Sắp xếp / Lọc nhanh">
+                    <button class="th-menu-trigger" data-col="${_escapeHtml(h)}" title="Sắp xếp / Lọc nhanh">
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
                     </button>
                 </div>
@@ -550,15 +668,50 @@ function renderPreviewAtActiveStep() {
         _bindHeaderEvents();
     }
 
-    // Render rows
+    // Gắn search, scroll và event delegation
+    _initTableSearch();
+    _initTableScroll();
+    _initTableEditing();
+
+    // Nếu có col-value filter đang active: tái áp dụng ngay (giữ filter qua các lần recalculate)
+    // Lọc bỏ các cột không còn tồn tại trong dataset mới
+    const headerSet = new Set(headers);
+    for (const col of [..._colValueFilters.keys()]) {
+        if (!headerSet.has(col)) _colValueFilters.delete(col);
+    }
+    if (_colValueFilters.size > 0) {
+        // Re-render rows và badges với filter đang giữ
+        _renderTableRows(renderData, headers);
+        _applyColValueFilters();
+        _updateHeaderFilterBadges();
+        // Dừng lại — badge số dòng đã được _applyColValueFilters xử lý
+        if (document.getElementById('preview-col-count'))
+            document.getElementById('preview-col-count').innerText = `${headers.length} cột`;
+        return;
+    }
+
+    // Render rows theo batch (không có filter)
     _renderTableRows(renderData, headers);
 
-    // Gắn search (chỉ lần đầu)
-    _initTableSearch();
+    // Cập nhật badges thống kê số dòng và cột chính xác
+    let displayText = '';
+    if (AppState.activeStepId === 'ROOT') {
+        const total = AppState.rootTotalRows || renderData.length;
+        if (total > renderData.length) {
+            displayText = `${total.toLocaleString()} dòng (xem trước ${renderData.length.toLocaleString()})`;
+        } else {
+            displayText = `${total.toLocaleString()} dòng`;
+        }
+    } else {
+        if (AppState.pipelineTotalRows && AppState.pipelineTotalRows > renderData.length) {
+            displayText = `${AppState.pipelineTotalRows.toLocaleString()} dòng (xem trước ${renderData.length.toLocaleString()})`;
+        } else if (renderData.length >= 1000) {
+            displayText = `${renderData.length.toLocaleString()} dòng (xem trước — xuất sẽ FULL)`;
+        } else {
+            displayText = `${renderData.length.toLocaleString()} dòng`;
+        }
+    }
 
-    // Cập nhật badges thống kê
-    let displayText = `${renderData.length.toLocaleString()} dòng`;
-    if (renderData.length >= 1000) displayText += ` (xem trước — xuất sẽ FULL)`;
     const rowCountEl = document.getElementById('preview-row-count');
     const colCountEl = document.getElementById('preview-col-count');
     if (rowCountEl) rowCountEl.innerText = displayText;
@@ -566,115 +719,425 @@ function renderPreviewAtActiveStep() {
 }
 
 // =============================================
-// HEADER CONTEXT MENU (QUICK SORT & FILTER)
+// EXCEL-STYLE COLUMN FILTER DROPDOWN
 // =============================================
-let _activeContextCol = null;
+
+/** State for column value filters: Map<colName, Set<string>> of allowed values */
+let _colValueFilters = new Map();  // col → Set of included values (null = no filter)
+let _cfdActiveCol = null;
+let _cfdAllValues = [];   // sorted unique values for current col
+let _cfdChecked = new Set(); // currently checked values
+
+function _closeCFD() {
+    const el = document.getElementById('col-filter-dropdown');
+    if (el) el.classList.add('hidden');
+    _cfdActiveCol = null;
+}
+
+function _openCFD(col, thElement) {
+    _cfdActiveCol = col;
+    const dropdown = document.getElementById('col-filter-dropdown');
+    if (!dropdown) return;
+
+    // Set title
+    const titleEl = document.getElementById('cfd-col-title');
+    if (titleEl) titleEl.textContent = col;
+
+    // Collect unique values from current render data (limit to top 10k rows for perf)
+    const data = _currentRenderData || [];
+    const valSet = new Map(); // normalized → display
+    const LIMIT = 10000;
+    const sample = data.length > LIMIT ? data.slice(0, LIMIT) : data;
+    for (let i = 0; i < sample.length; i++) {
+        const raw = sample[i][col];
+        const display = (raw === null || raw === undefined || String(raw).trim() === '') ? '' : String(raw).trim();
+        const key = display.toLowerCase();
+        if (!valSet.has(key)) valSet.set(key, display);
+    }
+
+    // Sort: empty first, then alpha
+    _cfdAllValues = [...valSet.values()].sort((a, b) => {
+        if (a === '' && b !== '') return -1;
+        if (b === '' && a !== '') return 1;
+        return a.localeCompare(b, 'vi', { sensitivity: 'base' });
+    });
+
+    // Init checked set: use existing filter or all
+    const existing = _colValueFilters.get(col);
+    if (existing) {
+        _cfdChecked = new Set(existing);
+    } else {
+        _cfdChecked = new Set(_cfdAllValues);
+    }
+
+    // Update sort button active state
+    const activeStep = AppState.steps.find(s => s.id === AppState.activeStepId);
+    let sortDir = null;
+    if (activeStep && activeStep.type === 'SORT' && activeStep.config.criteria) {
+        const crit = activeStep.config.criteria.find(c => c && c.col === col);
+        if (crit) sortDir = crit.dir;
+    }
+    document.getElementById('cfd-sort-asc').classList.toggle('active', sortDir === 'ASC');
+    document.getElementById('cfd-sort-desc').classList.toggle('active', sortDir === 'DESC');
+
+    // Clear search
+    const searchEl = document.getElementById('cfd-search-input');
+    if (searchEl) searchEl.value = '';
+
+    // Render value list
+    _cfdRenderValues('');
+
+    // Position dropdown
+    const rect = thElement.getBoundingClientRect();
+    dropdown.classList.remove('hidden');
+    const ddW = dropdown.offsetWidth || 280;
+    const ddH = dropdown.offsetHeight || 360;
+    let left = rect.left;
+    let top = rect.bottom + 4;
+    if (left + ddW > window.innerWidth - 8) left = window.innerWidth - ddW - 8;
+    if (top + ddH > window.innerHeight - 8) top = rect.top - ddH - 4;
+    dropdown.style.left = Math.max(4, left) + 'px';
+    dropdown.style.top = Math.max(4, top) + 'px';
+
+    // Focus search
+    if (searchEl) searchEl.focus();
+}
+
+function _cfdRenderValues(searchQuery) {
+    const list = document.getElementById('cfd-values-list');
+    if (!list) return;
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = q ? _cfdAllValues.filter(v => v.toLowerCase().includes(q)) : _cfdAllValues;
+
+    if (filtered.length === 0) {
+        list.innerHTML = `<div class="cfd-no-match">Không tìm thấy giá trị nào</div>`;
+        const all = document.getElementById('cfd-check-all');
+        if (all) all.indeterminate = false, all.checked = false;
+        return;
+    }
+
+    const frag = document.createDocumentFragment();
+    for (const val of filtered) {
+        const label = document.createElement('label');
+        label.className = 'cfd-value-item';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = _cfdChecked.has(val);
+        cb.addEventListener('change', () => {
+            if (cb.checked) _cfdChecked.add(val);
+            else _cfdChecked.delete(val);
+            _cfdUpdateSelectAll(filtered);
+        });
+        const span = document.createElement('span');
+        span.className = 'cfd-val-text' + (val === '' ? ' cfd-val-empty' : '');
+        span.textContent = val === '' ? '(Trống)' : val;
+        span.title = val === '' ? '(Ô trống)' : val;
+        label.appendChild(cb);
+        label.appendChild(span);
+        frag.appendChild(label);
+    }
+    list.innerHTML = '';
+    list.appendChild(frag);
+
+    _cfdUpdateSelectAll(filtered);
+}
+
+function _cfdUpdateSelectAll(filteredValues) {
+    const allCb = document.getElementById('cfd-check-all');
+    if (!allCb) return;
+    const checkedCount = filteredValues.filter(v => _cfdChecked.has(v)).length;
+    if (checkedCount === 0) { allCb.checked = false; allCb.indeterminate = false; }
+    else if (checkedCount === filteredValues.length) { allCb.checked = true; allCb.indeterminate = false; }
+    else { allCb.indeterminate = true; allCb.checked = false; }
+}
+
+function _cfdApplyFilter() {
+    const col = _cfdActiveCol;
+    if (!col) return;
+
+    // Determine if it's "select all" = no filter
+    const totalValues = _cfdAllValues;
+    const allSelected = totalValues.every(v => _cfdChecked.has(v));
+
+    if (allSelected) {
+        _colValueFilters.delete(col);
+    } else {
+        _colValueFilters.set(col, new Set(_cfdChecked));
+    }
+
+    _closeCFD();
+    _applyColValueFilters();
+    _updateHeaderFilterBadges();
+}
+
+function _cfdClearFilter() {
+    const col = _cfdActiveCol;
+    if (col) _colValueFilters.delete(col);
+    _closeCFD();
+    _applyColValueFilters();
+    _updateHeaderFilterBadges();
+}
+
+/** Apply all active column value filters on top of current render data */
+function _applyColValueFilters() {
+    const banner = document.getElementById('col-filter-banner');
+    const bannerText = document.getElementById('col-filter-banner-text');
+
+    if (_colValueFilters.size === 0) {
+        // No active col-value filters: re-render from pipeline result
+        _renderTableRows(_currentRenderData, _currentHeaders);
+        if (banner) banner.classList.add('hidden');
+        return;
+    }
+
+    let filtered = _currentRenderData;
+    for (const [col, allowedSet] of _colValueFilters) {
+        filtered = filtered.filter(row => {
+            const raw = row[col];
+            const display = (raw === null || raw === undefined || String(raw).trim() === '') ? '' : String(raw).trim();
+            return allowedSet.has(display);
+        });
+    }
+    _renderTableRows(filtered, _currentHeaders);
+
+    // Update row count badge
+    const rowCountEl = document.getElementById('preview-row-count');
+    if (rowCountEl) rowCountEl.innerText = `${filtered.length.toLocaleString()} dòng (đang lọc cột)`;
+
+    // Show banner
+    if (banner) {
+        banner.classList.remove('hidden');
+        const colNames = [..._colValueFilters.keys()].join(', ');
+        if (bannerText) bannerText.textContent = `Lọc theo ${_colValueFilters.size} cột: ${colNames}`;
+        // Bind clear-all button (once)
+        const clearAllBtn = document.getElementById('col-filter-clear-all');
+        if (clearAllBtn && !clearAllBtn.dataset.bound) {
+            clearAllBtn.dataset.bound = '1';
+            clearAllBtn.addEventListener('click', () => {
+                _colValueFilters = new Map();
+                _applyColValueFilters();
+                _updateHeaderFilterBadges();
+            });
+        }
+        // Bind save-to-pipeline button (once)
+        const savePipelineBtn = document.getElementById('col-filter-save-pipeline');
+        if (savePipelineBtn && !savePipelineBtn.dataset.bound) {
+            savePipelineBtn.dataset.bound = '1';
+            savePipelineBtn.addEventListener('click', () => {
+                _saveColFiltersToPipeline();
+            });
+        }
+    }
+}
+
+function _updateHeaderFilterBadges() {
+    const thead = document.getElementById('data-thead');
+    if (!thead) return;
+    thead.querySelectorAll('.grid-header-cell').forEach(th => {
+        const col = th.dataset.col;
+        if (_colValueFilters.has(col)) {
+            th.classList.add('has-col-filter');
+        } else {
+            th.classList.remove('has-col-filter');
+        }
+    });
+    // Also hide banner if no filters
+    const banner = document.getElementById('col-filter-banner');
+    if (banner) {
+        if (_colValueFilters.size === 0) banner.classList.add('hidden');
+    }
+}
+
+function _initCFD() {
+    const dropdown = document.getElementById('col-filter-dropdown');
+    if (!dropdown || dropdown.dataset.bound) return;
+    dropdown.dataset.bound = '1';
+
+    // Close on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#col-filter-dropdown') && !e.target.closest('.th-menu-trigger')) {
+            if (!document.getElementById('col-filter-dropdown').classList.contains('hidden')) {
+                _closeCFD();
+            }
+        }
+    }, true);
+
+    // Close button
+    document.getElementById('cfd-close-btn').addEventListener('click', _closeCFD);
+
+    // Sort buttons
+    document.getElementById('cfd-sort-asc').addEventListener('click', () => {
+        _triggerSortFromCFD('ASC');
+    });
+    document.getElementById('cfd-sort-desc').addEventListener('click', () => {
+        _triggerSortFromCFD('DESC');
+    });
+
+    // Search input
+    document.getElementById('cfd-search-input').addEventListener('input', (e) => {
+        _cfdRenderValues(e.target.value);
+    });
+
+    // Select-all checkbox
+    document.getElementById('cfd-check-all').addEventListener('change', (e) => {
+        const searchEl = document.getElementById('cfd-search-input');
+        const q = searchEl ? searchEl.value.trim().toLowerCase() : '';
+        const visible = q ? _cfdAllValues.filter(v => v.toLowerCase().includes(q)) : _cfdAllValues;
+        if (e.target.checked) {
+            visible.forEach(v => _cfdChecked.add(v));
+        } else {
+            visible.forEach(v => _cfdChecked.delete(v));
+        }
+        // Re-sync checkboxes in list
+        const list = document.getElementById('cfd-values-list');
+        if (list) {
+            list.querySelectorAll('input[type="checkbox"]').forEach((cb, i) => {
+                if (i < visible.length) cb.checked = e.target.checked;
+            });
+        }
+        _cfdUpdateSelectAll(visible);
+    });
+
+    // OK button (preview only)
+    document.getElementById('cfd-btn-ok').addEventListener('click', _cfdApplyFilter);
+
+    // Save to Pipeline button
+    const pipelineBtn = document.getElementById('cfd-btn-pipeline');
+    if (pipelineBtn) {
+        pipelineBtn.addEventListener('click', _saveColFilterFromCFD);
+    }
+
+    // Clear button
+    document.getElementById('cfd-btn-clear').addEventListener('click', _cfdClearFilter);
+
+    // Keyboard: Enter = OK, Escape = close
+    dropdown.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); _cfdApplyFilter(); }
+        if (e.key === 'Escape') { e.preventDefault(); _closeCFD(); }
+    });
+}
+
+function _saveColFilterFromCFD() {
+    const col = _cfdActiveCol;
+    if (!col) return;
+
+    const totalValues = _cfdAllValues;
+    const allSelected = totalValues.every(v => _cfdChecked.has(v));
+    if (allSelected) {
+        alert("Bạn đang chọn tất cả giá trị (không lọc). Hãy bỏ bớt các mục không cần trước khi lưu vào Pipeline.");
+        return;
+    }
+    if (_cfdChecked.size === 0) {
+        alert("Bạn chưa chọn giá trị nào để giữ lại!");
+        return;
+    }
+
+    _colValueFilters.set(col, new Set(_cfdChecked));
+    _closeCFD();
+    _saveColFiltersToPipeline(col);
+}
+
+function _saveColFiltersToPipeline(specificCol = null) {
+    let targetMap = specificCol ? new Map([[specificCol, _colValueFilters.get(specificCol)]]) : _colValueFilters;
+    if (!targetMap || targetMap.size === 0) return;
+
+    const conditions = [];
+    for (const [col, allowedSet] of targetMap) {
+        if (!allowedSet || allowedSet.size === 0) continue;
+        const valArr = [...allowedSet];
+        conditions.push({
+            col: col,
+            op: valArr.length === 1 ? 'EQUALS' : 'IN',
+            val: valArr.join(', '),
+            values: valArr,
+            ignoreAccents: false,
+            caseSensitive: true
+        });
+    }
+
+    if (conditions.length === 0) return;
+
+    const newStep = createStep('FILTER');
+    newStep.title = `Lọc: ${[...targetMap.keys()].join(', ')}`;
+    newStep.config = {
+        conditions: conditions,
+        logicType: "AND",
+        ignoreAccents: false,
+        caseSensitive: true
+    };
+
+    // Chèn ngay sau activeStepId hiện tại
+    const curIdx = AppState.steps.findIndex(s => s.id === AppState.activeStepId);
+    if (curIdx >= 0) {
+        AppState.steps.splice(curIdx + 1, 0, newStep);
+    } else {
+        AppState.steps.push(newStep);
+    }
+    AppState.activeStepId = newStep.id;
+
+    // Xóa bộ lọc tạm client vì đã trở thành bước chính thức của Pipeline
+    if (specificCol) {
+        _colValueFilters.delete(specificCol);
+    } else {
+        _colValueFilters = new Map();
+    }
+    const banner = document.getElementById('col-filter-banner');
+    if (banner && _colValueFilters.size === 0) banner.classList.add('hidden');
+
+    saveStateToLocal();
+    renderPipelineSteps();
+    renderConfigPanel();
+    recalculatePipeline(true);
+}
+
+function _triggerSortFromCFD(dir) {
+    const col = _cfdActiveCol;
+    if (!col) return;
+    _closeCFD();
+
+    let activeStep = AppState.steps.find(s => s.id === AppState.activeStepId);
+    if (activeStep && activeStep.type === 'SORT') {
+        if (!activeStep.config.criteria) activeStep.config.criteria = [];
+        const existIdx = activeStep.config.criteria.findIndex(c => c && c.col === col);
+        if (existIdx >= 0) {
+            activeStep.config.criteria[existIdx].dir = dir;
+        } else {
+            activeStep.config.criteria.push({ col, dir, dataType: 'AUTO' });
+        }
+    } else {
+        const newStep = createStep('SORT');
+        newStep.config.criteria = [{ col, dir, dataType: 'AUTO' }];
+        const curIdx = AppState.steps.findIndex(s => s.id === AppState.activeStepId);
+        if (curIdx >= 0) {
+            AppState.steps.splice(curIdx + 1, 0, newStep);
+        } else {
+            AppState.steps.push(newStep);
+        }
+        AppState.activeStepId = newStep.id;
+    }
+
+    saveStateToLocal();
+    renderPipelineSteps();
+    renderConfigPanel();
+    recalculatePipeline(true);
+}
 
 function _bindHeaderEvents() {
     const thead = document.getElementById('data-thead');
     if (!thead) return;
 
-    thead.querySelectorAll('.grid-header-cell').forEach(th => {
-        th.addEventListener('click', (e) => {
-            const col = th.dataset.col;
-            if (!col) return;
+    thead.querySelectorAll('.th-menu-trigger').forEach(btn => {
+        btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            _openHeaderContextMenu(col, th);
-        });
-    });
-
-    _initHeaderContextMenu();
-}
-
-function _openHeaderContextMenu(col, thElement) {
-    _activeContextCol = col;
-    const menu = document.getElementById('table-header-context-menu');
-    if (!menu) return;
-
-    const colHeader = document.getElementById('context-col-name');
-    if (colHeader) colHeader.innerText = 'Cột: ' + col;
-
-    const rect = thElement.getBoundingClientRect();
-    menu.style.top = (rect.bottom + 2) + 'px';
-    let leftPos = rect.left;
-    if (leftPos + 220 > window.innerWidth) leftPos = window.innerWidth - 230;
-    menu.style.left = Math.max(10, leftPos) + 'px';
-    menu.classList.remove('hidden');
-}
-
-function _initHeaderContextMenu() {
-    const menu = document.getElementById('table-header-context-menu');
-    if (!menu || menu.dataset.bound) return;
-    menu.dataset.bound = '1';
-
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('#table-header-context-menu') && !e.target.closest('.grid-header-cell')) {
-            menu.classList.add('hidden');
-        }
-    });
-
-    menu.querySelectorAll('.context-menu-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-            const action = item.dataset.action;
-            const col = _activeContextCol;
-            menu.classList.add('hidden');
+            const col = btn.dataset.col;
             if (!col) return;
-
-            if (action === 'SORT_ASC' || action === 'SORT_DESC') {
-                const dir = action === 'SORT_ASC' ? 'ASC' : 'DESC';
-                let activeStep = AppState.steps.find(s => s.id === AppState.activeStepId);
-                
-                if (activeStep && activeStep.type === 'SORT') {
-                    if (!activeStep.config.criteria) activeStep.config.criteria = [];
-                    const existIdx = activeStep.config.criteria.findIndex(c => c && c.col === col);
-                    if (existIdx >= 0) {
-                        activeStep.config.criteria[existIdx].dir = dir;
-                    } else {
-                        activeStep.config.criteria.push({ col, dir, dataType: 'AUTO' });
-                    }
-                } else {
-                    const newStep = createStep('SORT');
-                    newStep.config.criteria = [{ col, dir, dataType: 'AUTO' }];
-                    
-                    const curIdx = AppState.steps.findIndex(s => s.id === AppState.activeStepId);
-                    if (curIdx >= 0) {
-                        AppState.steps.splice(curIdx + 1, 0, newStep);
-                    } else {
-                        AppState.steps.push(newStep);
-                    }
-                    AppState.activeStepId = newStep.id;
-                }
-                
-                saveStateToLocal();
-                renderPipelineSteps();
-                renderConfigPanel();
-                recalculatePipeline(true);
-            } else if (action === 'FILTER_COL') {
-                let activeStep = AppState.steps.find(s => s.id === AppState.activeStepId);
-                
-                if (activeStep && activeStep.type === 'FILTER') {
-                    if (!activeStep.config.conditions) activeStep.config.conditions = [];
-                    activeStep.config.conditions.push({ col, op: 'CONTAINS', val: '' });
-                } else {
-                    const newStep = createStep('FILTER');
-                    newStep.config.conditions = [{ col, op: 'CONTAINS', val: '' }];
-                    
-                    const curIdx = AppState.steps.findIndex(s => s.id === AppState.activeStepId);
-                    if (curIdx >= 0) {
-                        AppState.steps.splice(curIdx + 1, 0, newStep);
-                    } else {
-                        AppState.steps.push(newStep);
-                    }
-                    AppState.activeStepId = newStep.id;
-                }
-                
-                saveStateToLocal();
-                renderPipelineSteps();
-                renderConfigPanel();
-                recalculatePipeline(true);
-            }
+            const th = btn.closest('.grid-header-cell');
+            _openCFD(col, th || btn);
         });
     });
+
+    _initCFD();
+    _updateHeaderFilterBadges();
 }
 
 
@@ -737,38 +1200,67 @@ function renderConfigPanel() {
             ${rootHeaderRowHtml}
         `;
 
-        const triggerReparse = () => {
-            if (AppState.rootFileCache) {
-                const sheetName = AppState.rootSelectedSheet;
-                const result = extractSheetData(
-                    AppState.rootFileCache.originalBuffer,
-                    sheetName,
-                    AppState.rootHeaderRowIndex
-                );
+        const triggerReparse = async () => {
+            if (!AppState.rootFileCache) return;
+            const sheetName = AppState.rootSelectedSheet;
+            const headerIdx = AppState.rootHeaderRowIndex || 0;
+
+            const loadingEl = document.getElementById('global-loading');
+            const loadingText = document.getElementById('global-loading-text');
+            if (loadingEl) {
+                loadingText.innerText = `Đang tải dữ liệu Sheet "${sheetName}"...`;
+                loadingEl.classList.remove('hidden');
+            }
+
+            // Yield để trình duyệt kịp render spinner và đóng select dropdown
+            await new Promise(r => setTimeout(r, 40));
+
+            try {
+                // Xoá cache pipeline cũ để tránh dữ liệu bị dính từ sheet trước
+                AppState.cachedResults.clear();
+                _colValueFilters = new Map();
+
+                const result = getOrLoadSheetData(sheetName, headerIdx);
                 AppState.rootData = result.data;
                 AppState.rootHeaders = result.headers;
-                if (AppState.rootFileCache.sheetsData[sheetName]) {
-                    AppState.rootFileCache.sheetsData[sheetName].fullData = result.fullData;
-                    AppState.rootTotalRows = result.totalRows;
-                }
-                recalculatePipeline();
-                renderPreviewAtActiveStep();
+                AppState.rootTotalRows = result.totalRows;
+
+                // Tự động gắn lại nguồn dữ liệu phụ cho VLOOKUP / COMPARE nếu chọn Tab trong file gốc
+                AppState.steps.forEach(step => {
+                    if (step.type === 'VLOOKUP' && step.config.sourceSheet) {
+                        const sd = getOrLoadSheetData(step.config.sourceSheet, 0);
+                        step.config.lookupData = sd.fullData || sd.data;
+                    }
+                    if (step.type === 'COMPARE' && step.config.sourceSheet) {
+                        const sd = getOrLoadSheetData(step.config.sourceSheet, 0);
+                        step.config.compareData = sd.fullData || sd.data;
+                    }
+                });
+
+                if (loadingText) loadingText.innerText = "Đang chạy lại các công đoạn...";
+                await recalculatePipeline();
                 renderPipelineSteps();
+                renderConfigPanel();
+                renderPreviewAtActiveStep();
+            } catch (err) {
+                console.error("Lỗi khi chuyển đổi sheet:", err);
+                alert("Lỗi khi chuyển đổi sheet: " + err.message);
+            } finally {
+                if (loadingEl) loadingEl.classList.add('hidden');
             }
         };
 
         if (document.getElementById('root-sheet-select')) {
-            document.getElementById('root-sheet-select').addEventListener('change', (e) => {
+            document.getElementById('root-sheet-select').addEventListener('change', async (e) => {
                 AppState.rootSelectedSheet = e.target.value;
-                triggerReparse();
-                renderConfigPanel();
+                await triggerReparse();
             });
         }
 
         if (document.getElementById('root-header-index')) {
-            document.getElementById('root-header-index').addEventListener('change', (e) => {
+            document.getElementById('root-header-index').addEventListener('change', async (e) => {
                 AppState.rootHeaderRowIndex = parseInt(e.target.value) || 0;
-                triggerReparse();
+                await triggerReparse();
             });
         }
 
@@ -776,35 +1268,69 @@ function renderConfigPanel() {
         const dropzone = document.getElementById('root-dropzone');
         const fileInput = document.getElementById('root-file-input');
         dropzone.addEventListener('click', () => fileInput.click());
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = 'var(--primary-hover)';
+            dropzone.style.background = '#e8f0fe';
+        });
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.style.borderColor = '';
+            dropzone.style.background = '';
+        });
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.style.borderColor = '';
+            dropzone.style.background = '';
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        });
         
         fileInput.addEventListener('change', async (e) => {
             if (e.target.files.length > 0) {
-                document.getElementById('global-loading').classList.remove('hidden');
-                document.getElementById('global-loading-text').innerText = "Đang đọc file và tự động chạy lại các công đoạn...";
+                const file = e.target.files[0];
+                const loadingEl = document.getElementById('global-loading');
+                const loadingText = document.getElementById('global-loading-text');
+                if (loadingEl) {
+                    loadingText.innerText = `Đang đọc file "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)} MB)...`;
+                    loadingEl.classList.remove('hidden');
+                }
+
+                // Yield để trình duyệt render spinner trước khi tác vụ nặng chạy
+                await new Promise(r => setTimeout(r, 40));
+
                 try {
                     // Cần huỷ worker cũ nếu đã từng tải file trước đó để tránh tràn RAM
                     if (AppState.rootFileCache && AppState.rootFileCache.workerApi) {
                         AppState.rootFileCache.workerApi.terminate();
                     }
 
-                    const result = await readExcelFile(e.target.files[0]);
+                    // Xóa sạch cache kết quả cũ
+                    AppState.cachedResults.clear();
+                    _colValueFilters = new Map();
+
+                    const result = await readExcelFile(file);
                     AppState.rootFileCache = result;
                     AppState.rootSelectedSheet = result.sheetNames[0];
                     AppState.rootHeaderRowIndex = 0;
                     
                     // Lấy data từ sheet đầu tiên
-                    const sheetData = result.sheetsData[AppState.rootSelectedSheet];
+                    const sheetData = getOrLoadSheetData(AppState.rootSelectedSheet, 0);
                     AppState.rootData = sheetData.data;
                     AppState.rootHeaders = sheetData.headers;
                     AppState.rootTotalRows = sheetData.totalRows || sheetData.data.length;
 
                     // Tự động gắn lại nguồn dữ liệu phụ cho VLOOKUP / COMPARE nếu chọn Tab trong file gốc
                     AppState.steps.forEach(step => {
-                        if (step.type === 'VLOOKUP' && step.config.sourceSheet && result.sheetsData[step.config.sourceSheet]) {
-                            step.config.lookupData = result.sheetsData[step.config.sourceSheet].data;
+                        if (step.type === 'VLOOKUP' && step.config.sourceSheet) {
+                            const sd = getOrLoadSheetData(step.config.sourceSheet, 0);
+                            step.config.lookupData = sd.fullData || sd.data;
                         }
-                        if (step.type === 'COMPARE' && step.config.sourceSheet && result.sheetsData[step.config.sourceSheet]) {
-                            step.config.compareData = result.sheetsData[step.config.sourceSheet].data;
+                        if (step.type === 'COMPARE' && step.config.sourceSheet) {
+                            const sd = getOrLoadSheetData(step.config.sourceSheet, 0);
+                            step.config.compareData = sd.fullData || sd.data;
                         }
                     });
 
@@ -813,13 +1339,16 @@ function renderConfigPanel() {
                         AppState.activeStepId = AppState.steps[AppState.steps.length - 1].id;
                     }
 
+                    if (loadingText) loadingText.innerText = "Đang chạy các công đoạn xử lý...";
                     await recalculatePipeline();
                     renderPipelineSteps();
                     renderConfigPanel(); 
+                    renderPreviewAtActiveStep();
                 } catch(e) {
                     alert("Lỗi đọc file: " + e.message);
                 } finally {
-                    document.getElementById('global-loading').classList.add('hidden');
+                    if (loadingEl) loadingEl.classList.add('hidden');
+                    fileInput.value = '';
                 }
             }
         });
@@ -1729,9 +2258,10 @@ function renderConfigPanel() {
             } else if (val) {
                 uploadArea.style.display = 'none';
                 step.config.sourceSheet = val;
-                step.config.lookupData = AppState.rootFileCache.sheetsData[val].data;
+                const sd = getOrLoadSheetData(val, 0);
+                step.config.lookupData = sd.fullData || sd.data;
                 step.config.grabColumns = []; // Reset cấu hình
-                document.getElementById('vlk-filename').innerText = `Thành công! Đã bốc data từ Tab: ${val}`;
+                document.getElementById('vlk-filename').innerText = `Thành công! Đã bốc data từ Tab: ${val} (${(sd.totalRows || 0).toLocaleString()} dòng)`;
                 recalculatePipeline();
                 renderConfigPanel();
             } else {
@@ -2265,8 +2795,9 @@ function renderConfigPanel() {
             } else if (val) {
                 cmpUploadArea.style.display = 'none';
                 step.config.sourceSheet = val;
-                step.config.compareData = AppState.rootFileCache.sheetsData[val].data;
-                document.getElementById('cmp-filename').innerText = `Thành công! Đã bốc data từ Tab: ${val}`;
+                const sd = getOrLoadSheetData(val, 0);
+                step.config.compareData = sd.fullData || sd.data;
+                document.getElementById('cmp-filename').innerText = `Thành công! Đã bốc data từ Tab: ${val} (${(sd.totalRows || 0).toLocaleString()} dòng)`;
                 recalculatePipeline();
                 renderConfigPanel();
             } else {

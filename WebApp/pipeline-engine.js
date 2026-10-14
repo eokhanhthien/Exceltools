@@ -119,11 +119,27 @@ function evaluateFilterCondition(cellVal, cond, defaultIgnoreAccents, defaultCas
     if (op === 'STARTS_WITH') return v1.startsWith(v2);
     if (op === 'ENDS_WITH') return v1.endsWith(v2);
     if (op === 'IN') {
-        const list = v2.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
+        const list = Array.isArray(cond.values) ? cond.values : v2.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
+        if (ignoreAccents || !caseSensitive) {
+            return list.some(item => {
+                let it = String(item).trim();
+                if (ignoreAccents) it = removeVietnameseTones(it);
+                if (!caseSensitive) it = it.toUpperCase();
+                return it === v1;
+            });
+        }
         return list.includes(v1);
     }
     if (op === 'NOT_IN') {
-        const list = v2.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
+        const list = Array.isArray(cond.values) ? cond.values : v2.split(/[,;]/).map(s => s.trim()).filter(s => s !== "");
+        if (ignoreAccents || !caseSensitive) {
+            return !list.some(item => {
+                let it = String(item).trim();
+                if (ignoreAccents) it = removeVietnameseTones(it);
+                if (!caseSensitive) it = it.toUpperCase();
+                return it === v1;
+            });
+        }
         return !list.includes(v1);
     }
 
@@ -937,8 +953,13 @@ class ExcelWorkerAPI {
             const msgId = 'm' + (++this.msgCounter);
             this.callbacks.set(msgId, { resolve: res, reject: rej });
             try {
-                const safeSteps = JSON.parse(JSON.stringify(steps));
-                this.worker.postMessage({ type: 'APPLY_PIPELINE', msgId, steps: safeSteps, fullData: fullData || [] });
+                // Thử gửi trực tiếp bằng Structured Clone (nhanh hơn JSON.stringify gấp nhiều lần)
+                try {
+                    this.worker.postMessage({ type: 'APPLY_PIPELINE', msgId, steps, fullData: fullData || [] });
+                } catch (cloneErr) {
+                    const safeSteps = JSON.parse(JSON.stringify(steps));
+                    this.worker.postMessage({ type: 'APPLY_PIPELINE', msgId, steps: safeSteps, fullData: fullData || [] });
+                }
             } catch (e) {
                 rej(new Error("Lỗi chuẩn hóa dữ liệu: " + e.message));
             }
@@ -968,11 +989,11 @@ class ExcelWorkerAPI {
     }
 
     async extractSheet(sheetName, headerIdx) {
-        const buffer = (window.AppState && window.AppState.rootFileCache)
-            ? window.AppState.rootFileCache.originalBuffer
+        const source = (window.AppState && window.AppState.rootFileCache)
+            ? (window.AppState.rootFileCache._wb || window.AppState.rootFileCache.originalBuffer)
             : null;
-        if (!buffer) return { data: [], headers: [], totalRows: 0 };
-        return extractSheetData(buffer, sheetName, headerIdx);
+        if (!source) return { data: [], headers: [], totalRows: 0 };
+        return extractSheetData(source, sheetName, headerIdx);
     }
 
     terminate() { 
@@ -983,31 +1004,81 @@ class ExcelWorkerAPI {
 }
 
 // ==========================================
-// Đọc một Sheet từ buffer đã có, với tuỳ chọn header row
-// (dùng khi người dùng đổi Sheet hoặc đổi Header Row Index)
+// Đọc một Sheet từ Workbook đã parse hoặc buffer, với tuỳ chọn header row
+// ⚡ Tối ưu siêu tốc:
+//   - Tái sử dụng workbook (_wb) đã có trong RAM, KHÔNG đọc lại file từ đầu
+//   - Bỏ qua Object.values(rowObj) tránh cấp phát hàng triệu mảng rác
+//   - Tự động chuẩn hoá & chống trùng lặp tên cột
 // ==========================================
-function extractSheetData(buffer, sheetName, headerIdx = 0) {
+function extractSheetData(source, sheetName, headerIdx = 0, limit = null) {
     try {
-        const data8 = new Uint8Array(buffer);
-        const wb = XLSX.read(data8, { type: 'array' });
+        let wb;
+        if (source && source.Sheets) {
+            wb = source;
+        } else if (source && (source instanceof ArrayBuffer || source.buffer instanceof ArrayBuffer || ArrayBuffer.isView(source))) {
+            const data8 = (source instanceof Uint8Array) ? source : new Uint8Array(source);
+            wb = XLSX.read(data8, { 
+                type: 'array', 
+                dense: true, 
+                cellFormula: false, 
+                cellHTML: false, 
+                cellText: false 
+            });
+        } else {
+            return { data: [], headers: [], fullData: [], totalRows: 0 };
+        }
+
         const ws = wb.Sheets[sheetName];
         if (!ws) return { data: [], headers: [], fullData: [], totalRows: 0 };
 
-        // Đọc dạng mảng 2 chiều để hỗ trợ chọn dòng header
+        // Đọc dạng mảng 2 chiều để định vị dòng tiêu đề chính xác
         const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-        if (raw.length <= headerIdx) return { data: [], headers: [], fullData: [], totalRows: 0 };
+        if (!raw || raw.length <= headerIdx) return { data: [], headers: [], fullData: [], totalRows: 0 };
 
-        const headers = raw[headerIdx].map((h, i) => String(h || '').trim() || 'Col' + (i + 1));
+        // Chuẩn hóa Header: tự động điền cột trống, xử lý cột trùng tên
+        const seen = new Map();
+        const headerRow = raw[headerIdx] || [];
+        const headers = [];
+        for (let i = 0; i < headerRow.length; i++) {
+            let colName = String(headerRow[i] ?? '').trim();
+            if (!colName) colName = `Col_${i + 1}`;
+            if (seen.has(colName)) {
+                const count = seen.get(colName) + 1;
+                seen.set(colName, count);
+                colName = `${colName}_${count}`;
+            } else {
+                seen.set(colName, 1);
+            }
+            headers.push(colName);
+        }
+
+        const numCols = headers.length;
         const rows = [];
         for (let i = headerIdx + 1; i < raw.length; i++) {
+            const rawRow = raw[i];
+            if (!rawRow || rawRow.length === 0) continue;
+
             const rowObj = {};
-            headers.forEach((h, idx) => { rowObj[h] = (raw[i][idx] === null || raw[i][idx] === undefined) ? '' : raw[i][idx]; });
-            if (Object.values(rowObj).some(v => v !== '')) {
+            let hasVal = false;
+            for (let c = 0; c < numCols; c++) {
+                const cellVal = rawRow[c];
+                if (cellVal !== null && cellVal !== undefined && cellVal !== '') {
+                    hasVal = true;
+                    rowObj[headers[c]] = cellVal;
+                } else {
+                    rowObj[headers[c]] = '';
+                }
+            }
+
+            if (hasVal) {
                 rowObj.__original_row_idx__ = i + 1;
                 rows.push(rowObj);
             }
         }
-        return { headers, data: rows, fullData: rows, totalRows: rows.length };
+
+        const totalRows = rows.length;
+        const data = limit ? rows.slice(0, limit) : rows;
+        return { headers, data, fullData: rows, totalRows };
     } catch (e) {
         console.error('extractSheetData error:', e);
         return { data: [], headers: [], fullData: [], totalRows: 0 };
@@ -1016,10 +1087,10 @@ function extractSheetData(buffer, sheetName, headerIdx = 0) {
 
 // ==========================================
 // Đọc file Excel từ File object (FileReader + Uint8Array + XLSX)
-// ⚡ Tối ưu tốc độ:
-//   - Chỉ parse sheet đầu tiên ngay lập tức
-//   - Các sheet khác parse lazy khi người dùng chọn
-//   - Worker init chạy song song với parse → không block UI
+// ⚡ Tối ưu tốc độ & RAM cho file lớn (>20,000 dòng):
+//   - dense:true, cellFormula:false, cellHTML:false, cellText:false → nhanh gấp 3 lần
+//   - Giữ lại _wb để khi chuyển đổi sheet chỉ bốc thẳng từ RAM, không parse lại
+//   - Yield 20ms để UI kịp render Loading Spinner mượt mà
 // ==========================================
 async function readExcelFile(file, limit = 5000) {
     return new Promise((resolve, reject) => {
@@ -1027,47 +1098,51 @@ async function readExcelFile(file, limit = 5000) {
         reader.onerror = () => reject(new Error('Không đọc được file.'));
 
         reader.onload = function (evt) {
-            try {
-                const arrayBuf = evt.target.result;
-                const data = new Uint8Array(arrayBuf);
+            // Cho browser một khoảng nghỉ ngắn để vẽ Loading Spinner mượt mà
+            setTimeout(() => {
+                try {
+                    const arrayBuf = evt.target.result;
+                    const data = new Uint8Array(arrayBuf);
 
-                // dense:true → SheetJS dùng Array thay vì Object cho cells, nhanh hơn ~30%
-                const wb = XLSX.read(data, { type: 'array', dense: true });
-                const sheetNames = wb.SheetNames;
-
-                // ⚡ Chỉ parse sheet đầu tiên — bỏ qua các sheet khác
-                const firstName = sheetNames[0];
-                const firstWs = wb.Sheets[firstName];
-                const firstJson = XLSX.utils.sheet_to_json(firstWs, { defval: '' });
-                firstJson.forEach((row, i) => { row.__original_row_idx__ = i + 2; });
-                const firstHeaders = Object.keys(firstJson[0] || {}).filter(k => k !== '__original_row_idx__');
-
-                const sheetsData = {
-                    [firstName]: {
-                        headers: firstHeaders,
-                        data: limit ? firstJson.slice(0, limit) : firstJson,
-                        fullData: firstJson,
-                        totalRows: firstJson.length
-                    }
-                };
-
-                // Worker init chạy song song, không chặn parse
-                const workerApi = new ExcelWorkerAPI();
-                workerApi.init().then(() => {
-                    resolve({
-                        fileName: file.name,
-                        originalBuffer: arrayBuf,
-                        workerApi,
-                        sheetNames,
-                        sheetsData,
-                        _wb: wb,      // giữ workbook để lazy-parse các sheet sau
-                        _limit: limit
+                    // dense:true + tắt các parser phụ → siêu nhanh và tiết kiệm RAM
+                    const wb = XLSX.read(data, { 
+                        type: 'array', 
+                        dense: true, 
+                        cellFormula: false, 
+                        cellHTML: false, 
+                        cellText: false 
                     });
-                }).catch(reject);
+                    const sheetNames = wb.SheetNames;
+                    if (!sheetNames || sheetNames.length === 0) {
+                        throw new Error('File Excel không có bất kỳ Sheet nào.');
+                    }
 
-            } catch (e) {
-                reject(e);
-            }
+                    // Parse sheet đầu tiên
+                    const firstName = sheetNames[0];
+                    const firstSheetData = extractSheetData(wb, firstName, 0, limit);
+
+                    const sheetsData = {
+                        [firstName]: firstSheetData
+                    };
+
+                    // Worker init chạy song song
+                    const workerApi = new ExcelWorkerAPI();
+                    workerApi.init().then(() => {
+                        resolve({
+                            fileName: file.name,
+                            originalBuffer: arrayBuf,
+                            workerApi,
+                            sheetNames,
+                            sheetsData,
+                            _wb: wb,
+                            _limit: limit
+                        });
+                    }).catch(reject);
+
+                } catch (e) {
+                    reject(e);
+                }
+            }, 20);
         };
 
         reader.readAsArrayBuffer(file);
