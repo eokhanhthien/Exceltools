@@ -2303,6 +2303,7 @@ function renderConfigPanel() {
         const fbHeaders = availableHeaders;
         const FN_CATS = [
             { cat: '⚙️ Điều kiện', color: '#7c3aed', fns: [
+<<<<<<< HEAD
                 { n: 'IF',         tpl: 'IF(DK, "neu dung", "neu sai")',                      d: 'Nếu điều kiện → đúng/sai' },
                 { n: 'IFS',        tpl: 'IFS(DK1,"ket1", DK2,"ket2", "mac dinh")',           d: 'Nhiều điều kiện liên tiếp' },
                 { n: 'IFERROR',    tpl: 'IFERROR(BIEU_THUC, "Loi")',                          d: 'Bắt lỗi, trả giá trị thay thế' },
@@ -2338,24 +2339,47 @@ function renderConfigPanel() {
                 { n: 'CONCAT',      tpl: 'CONCAT(C1, C2)',               d: 'Nối chuỗi' },
                 { n: 'TEXT',        tpl: 'TEXT(COT, "0.00")',            d: 'Định dạng số' },
                 { n: 'VALUE',       tpl: 'VALUE(COT)',                   d: 'Chuyển chuỗi → số' },
+=======
+                { n: 'IF',      tpl: 'IF(DK, "neu dung", "neu sai")',                      d: 'Nếu điều kiện → đúng/sai', ex: 'IF([Diem]>=5, "Đậu", "Rớt")', res: 'Đậu' },
+                { n: 'IFS',     tpl: 'IFS(DK1,"ket1", DK2,"ket2", "mac dinh")',           d: 'Nhiều điều kiện liên tiếp', ex: 'IFS([Diem]>=8, "Giỏi", [Diem]>=5, "Khá", "Kém")', res: 'Giỏi' },
+                { n: 'IFERROR', tpl: 'IFERROR(BIEU_THUC, "Loi")',                          d: 'Bắt lỗi, trả giá trị thay thế', ex: 'IFERROR(10/0, "Lỗi chia 0")', res: 'Lỗi chia 0' },
+                { n: 'IFBLANK', tpl: 'IFBLANK(COT, "Trong")',                              d: 'Nếu rỗng thì trả giá trị thay thế', ex: 'IFBLANK([Ghi chu], "Không có")', res: 'Không có' },
+                { n: 'SWITCH',  tpl: 'SWITCH(COT, "A","Loai 1", "B","Loai 2", "Khac")',   d: 'Khớp theo giá trị (giống CHOOSE)', ex: 'SWITCH([Loai], "A", "VIP", "B", "Thường", "Khác")', res: 'VIP' },
+            ]},
+            { cat: '📝 Chuỗi văn bản', color: '#059669', fns: [
+                { n: 'LEFT',        tpl: 'LEFT(COT, 5)',                 d: 'Lấy n ký tự bên trái', ex: 'LEFT("Nguyen Van A", 6)', res: 'Nguyen' },
+                { n: 'RIGHT',       tpl: 'RIGHT(COT, 3)',                d: 'Lấy n ký tự bên phải', ex: 'RIGHT("Nguyen Van A", 1)', res: 'A' },
+                { n: 'MID',         tpl: 'MID(COT, 2, 4)',               d: 'Lấy từ vị trí bắt đầu, n ký tự', ex: 'MID("Nguyen", 2, 3)', res: 'guy' },
+                { n: 'LEN',         tpl: 'LEN(COT)',                     d: 'Đếm tổng số ký tự', ex: 'LEN("Hello")', res: '5' },
+                { n: 'TRIM',        tpl: 'TRIM(COT)',                    d: 'Xóa khoảng trắng thừa 2 đầu và giữa', ex: 'TRIM("  A   B  ")', res: 'A B' },
+                { n: 'UPPER',       tpl: 'UPPER(COT)',                   d: 'Chuyển toàn bộ sang CHỮ HOA', ex: 'UPPER("abc")', res: 'ABC' },
+                { n: 'LOWER',       tpl: 'LOWER(COT)',                   d: 'Chuyển toàn bộ sang chữ thường', ex: 'LOWER("ABC")', res: 'abc' },
+                { n: 'PROPER',      tpl: 'PROPER(COT)',                  d: 'Viết Hoa Chữ Đầu Mỗi Từ', ex: 'PROPER("nguyen van a")', res: 'Nguyen Van A' },
+                { n: 'SUBSTITUTE',  tpl: 'SUBSTITUTE(COT, "cu", "moi")', d: 'Thay thế toàn bộ chuỗi con', ex: 'SUBSTITUTE("A B C", " ", "_")', res: 'A_B_C' },
+                { n: 'REPLACE',     tpl: 'REPLACE(COT, 1, 3, "moi")',    d: 'Thay n ký tự từ vị trí chỉ định', ex: 'REPLACE("2024", 1, 2, "19")', res: '1924' },
+                { n: 'CONCAT',      tpl: 'CONCAT(C1, C2)',               d: 'Nối chuỗi', ex: 'CONCAT("A", " ", "B")', res: 'A B' },
+                { n: 'TEXT',        tpl: 'TEXT(COT, "0.00")',            d: 'Định dạng số', ex: 'TEXT(100, "0.00")', res: '100.00' },
+                { n: 'VALUE',       tpl: 'VALUE(COT)',                   d: 'Chuyển chuỗi → số', ex: 'VALUE("100")', res: '100' },
+>>>>>>> 553bd82f9a17bc6b66d9d0b073d66a6a0f2cc2b5
             ]},
             { cat: '🔢 Số học', color: '#2563eb', fns: [
-                { n: 'ROUND',      tpl: 'ROUND(COT, 0)',       d: 'Làm tròn số' },
-                { n: 'ABS',        tpl: 'ABS(COT)',            d: 'Giá trị tuyệt đối' },
-                { n: 'MOD',        tpl: 'MOD(COT, 10)',        d: 'Phần dư' },
-                { n: 'SUM',        tpl: 'SUM(C1, C2)',         d: 'Tổng cộng' },
-                { n: 'AVERAGE',    tpl: 'AVERAGE(C1, C2)',     d: 'Trung bình' },
-                { n: 'MAX',        tpl: 'MAX(C1, C2)',         d: 'Lớn nhất' },
-                { n: 'MIN',        tpl: 'MIN(C1, C2)',         d: 'Nhỏ nhất' },
-                { n: 'COUNT',      tpl: 'COUNT(C1, C2)',       d: 'Đếm số' },
+                { n: 'ROUND',      tpl: 'ROUND(COT, 0)',       d: 'Làm tròn số', ex: 'ROUND(3.1415, 2)', res: '3.14' },
+                { n: 'ABS',        tpl: 'ABS(COT)',            d: 'Giá trị tuyệt đối', ex: 'ABS(-5)', res: '5' },
+                { n: 'MOD',        tpl: 'MOD(COT, 10)',        d: 'Phần dư', ex: 'MOD(10, 3)', res: '1' },
+                { n: 'SUM',        tpl: 'SUM(C1, C2)',         d: 'Tổng cộng', ex: 'SUM(10, 20)', res: '30' },
+                { n: 'AVERAGE',    tpl: 'AVERAGE(C1, C2)',     d: 'Trung bình', ex: 'AVERAGE(10, 20)', res: '15' },
+                { n: 'MAX',        tpl: 'MAX(C1, C2)',         d: 'Lớn nhất', ex: 'MAX(10, 20)', res: '20' },
+                { n: 'MIN',        tpl: 'MIN(C1, C2)',         d: 'Nhỏ nhất', ex: 'MIN(10, 20)', res: '10' },
+                { n: 'COUNT',      tpl: 'COUNT(C1, C2)',       d: 'Đếm số', ex: 'COUNT(1, "A", 2)', res: '2' },
             ]},
             { cat: '🔗 Logic & Kiểm tra', color: '#b45309', fns: [
-                { n: 'AND',      tpl: 'AND(C1>0, C2<100)',    d: 'VÀ (&&)' },
-                { n: 'OR',       tpl: 'OR(C1=="A", C2=="B")', d: 'HOẶC (||)' },
-                { n: 'NOT',      tpl: 'NOT(ISBLANK(COT))',    d: 'Phủ định' },
-                { n: 'ISBLANK',  tpl: 'ISBLANK(COT)',         d: 'Kiểm tra rỗng' },
-                { n: 'ISNUMBER', tpl: 'ISNUMBER(COT)',        d: 'Kiểm tra số' },
+                { n: 'AND',      tpl: 'AND(C1>0, C2<100)',    d: 'VÀ (&&)', ex: 'AND(1>0, 2>0)', res: 'true' },
+                { n: 'OR',       tpl: 'OR(C1=="A", C2=="B")', d: 'HOẶC (||)', ex: 'OR(1>0, 0>1)', res: 'true' },
+                { n: 'NOT',      tpl: 'NOT(ISBLANK(COT))',    d: 'Phủ định', ex: 'NOT(true)', res: 'false' },
+                { n: 'ISBLANK',  tpl: 'ISBLANK(COT)',         d: 'Kiểm tra rỗng', ex: 'ISBLANK("")', res: 'true' },
+                { n: 'ISNUMBER', tpl: 'ISNUMBER(COT)',        d: 'Kiểm tra số', ex: 'ISNUMBER(123)', res: 'true' },
             ]},
+<<<<<<< HEAD
             { cat: '📅 Ngày Tháng & Tuổi', color: '#0891b2', fns: [
                 { n: 'DATECONVERTPRO', tpl: 'DATECONVERTPRO(COT, "dd*mm*yyyy", "dd/mm/yyyy")', d: 'Chuyển định dạng thông minh — * khớp mọi ký tự phân cách (-, /, _, .). Trả "Error" nếu ngày tháng sai.' },
                 { n: 'DATECONVERT',tpl: 'DATECONVERT(COT, "dd/mm/yyyy", "mm-dd-yyyy")', d: 'Chuyển định dạng chủ động (Gốc → Mới)' },
@@ -2366,17 +2390,28 @@ function renderConfigPanel() {
                 { n: 'DAYS',       tpl: 'DAYS(C2, C1)',                     d: 'Số ngày chênh lệch' },
                 { n: 'ADDDAYS',    tpl: 'ADDDAYS(COT, 7)',                  d: 'Cộng thêm n ngày' },
                 { n: 'DATEVALUE',  tpl: 'DATEVALUE("31/12/2024")',           d: 'Chuyển chữ thành ngày' },
+=======
+            { cat: '📅 Ngày Tháng', color: '#0891b2', fns: [
+                { n: 'DATECONVERTPRO', tpl: 'DATECONVERTPRO(COT, "dd*mm*yyyy", "dd/mm/yyyy")', d: 'Chuyển định dạng thông minh — * khớp mọi ký tự phân cách (-, /, _, .). Trả "Error" nếu ngày tháng sai.', ex: 'DATECONVERTPRO("31-12-2024", "dd*mm*yyyy", "mm/dd/yyyy")', res: '12/31/2024' },
+                { n: 'DATECONVERT',tpl: 'DATECONVERT(COT, "dd/mm/yyyy", "mm-dd-yyyy")', d: 'Chuyển định dạng chủ động (Gốc → Mới)', ex: 'DATECONVERT("31/12/2024", "dd/mm/yyyy", "mm-dd-yyyy")', res: '12-31-2024' },
+                { n: 'DATEFORMAT', tpl: 'DATEFORMAT(COT, "dd-MM-yyyy")', d: 'Đổi định dạng (Máy tự đoán ngày gốc)', ex: 'DATEFORMAT("2024-12-31", "dd/MM/yyyy")', res: '31/12/2024' },
+                { n: 'DATEDIF',    tpl: 'DATEDIF(C1, C2, "D")',             d: 'Khoảng cách ngày', ex: 'DATEDIF("2024-01-01", "2024-01-10", "D")', res: '9' },
+                { n: 'TODAY',      tpl: 'TODAY()',                           d: 'Ngày hôm nay', ex: 'TODAY()', res: '04/06/2026' },
+                { n: 'DAYS',       tpl: 'DAYS(C2, C1)',                     d: 'Số ngày chênh lệch', ex: 'DAYS("2024-01-10", "2024-01-01")', res: '9' },
+                { n: 'ADDDAYS',    tpl: 'ADDDAYS(COT, 7)',                  d: 'Cộng thêm n ngày', ex: 'ADDDAYS("2024-01-01", 7)', res: '2024-01-08' },
+                { n: 'DATEVALUE',  tpl: 'DATEVALUE("31/12/2024")',           d: 'Chuyển chữ thành ngày', ex: 'DATEVALUE("2024-12-31")', res: 'Số nguyên (Excel Date)' },
+>>>>>>> 553bd82f9a17bc6b66d9d0b073d66a6a0f2cc2b5
             ]},
             { cat: '💰 Định Dạng Số', color: '#dc2626', fns: [
-                { n: 'VND',       tpl: 'VND(COT)',              d: 'Định dạng tiền VND' },
-                { n: 'DOLLAR',    tpl: 'DOLLAR(COT, 2)',        d: 'Định dạng tiền USD' },
-                { n: 'NUMFORMAT', tpl: 'NUMFORMAT(COT, "VND")', d: 'Format nâng cao' },
+                { n: 'VND',       tpl: 'VND(COT)',              d: 'Định dạng tiền VND', ex: 'VND(5000000)', res: '5,000,000 ₫' },
+                { n: 'DOLLAR',    tpl: 'DOLLAR(COT, 2)',        d: 'Định dạng tiền USD', ex: 'DOLLAR(5000)', res: '$5,000.00' },
+                { n: 'NUMFORMAT', tpl: 'NUMFORMAT(COT, "VND")', d: 'Format nâng cao', ex: 'NUMFORMAT(1000, "VND")', res: '1,000 ₫' },
             ]},
             { cat: '🔧 Tiện Ích', color: '#6b7280', fns: [
-                { n: 'REMOVEACCENTS', tpl: 'REMOVEACCENTS(COT)',          d: 'Bỏ dấu tiếng Việt' },
-                { n: 'REMOVEVN',      tpl: 'REMOVEVN(COT)',               d: 'Bỏ dấu tiếng Việt' },
-                { n: 'EXTRACTNUM',    tpl: 'EXTRACTNUM(COT)',             d: 'Lấy số từ chuỗi' },
-                { n: 'EXTRACTTEXT',   tpl: 'EXTRACTTEXT(COT)',            d: 'Lấy chữ từ chuỗi' },
+                { n: 'REMOVEACCENTS', tpl: 'REMOVEACCENTS(COT)',          d: 'Bỏ dấu tiếng Việt', ex: 'REMOVEACCENTS("Xin chào")', res: 'Xin chao' },
+                { n: 'REMOVEVN',      tpl: 'REMOVEVN(COT)',               d: 'Bỏ dấu tiếng Việt', ex: 'REMOVEVN("Việt Nam")', res: 'Viet Nam' },
+                { n: 'EXTRACTNUM',    tpl: 'EXTRACTNUM(COT)',             d: 'Lấy số từ chuỗi', ex: 'EXTRACTNUM("Giá 500k")', res: '500' },
+                { n: 'EXTRACTTEXT',   tpl: 'EXTRACTTEXT(COT)',            d: 'Lấy chữ từ chuỗi', ex: 'EXTRACTTEXT("Giá 500k")', res: 'Giá k' },
             ]}
         ];
 
@@ -2570,7 +2605,7 @@ function renderConfigPanel() {
             <div style="margin-bottom:8px;">
                 <div style="font-size:10px;font-weight:700;color:${cat.color};margin-bottom:4px;">${cat.cat}</div>
                 <div style="display:flex;flex-wrap:wrap;gap:3px;">
-                    ${cat.fns.map(f => `<button class="fb-fn-btn" data-tpl="${f.tpl.replace(/"/g,'&quot;')}" title="${f.d}" style="padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid ${cat.color};color:${cat.color};background:${cat.color}10;">${f.n}</button>`).join('')}
+                    ${cat.fns.map(f => `<button class="fb-fn-btn" data-tpl="${f.tpl.replace(/"/g,'&quot;')}" style="padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid ${cat.color};color:${cat.color};background:${cat.color}10;">${f.n}</button>`).join('')}
                 </div>
             </div>`).join('');
 
@@ -2671,6 +2706,48 @@ function renderConfigPanel() {
                 const ins = btn.dataset.tpl;
                 insertHtmlAtCursor(ins);
                 updateFormulaFromEditor();
+            });
+
+            btn.addEventListener('mouseenter', () => {
+                let gt = document.getElementById('global-tooltip');
+                if (!gt) {
+                    gt = document.createElement('div');
+                    gt.id = 'global-tooltip';
+                    document.body.appendChild(gt);
+                }
+                
+                const fnName = btn.innerText.trim();
+                let fData = null;
+                for (const cat of FN_CATS) {
+                    const found = cat.fns.find(x => x.n === fnName);
+                    if (found) { fData = found; break; }
+                }
+                
+                if (fData) {
+                    gt.innerHTML = `
+                        <b>${fData.n}</b>
+                        <div>${fData.d}</div>
+                        ${fData.ex ? `<span class="ex-lbl">Ví dụ:</span><span class="ex-code">${fData.ex.replace(/"/g,'&quot;')}</span>` : ''}
+                        ${fData.res ? `<span class="ex-lbl">Kết quả:</span><span class="ex-res">👉 ${fData.res.replace(/"/g,'&quot;')}</span>` : ''}
+                    `;
+                    
+                    const rect = btn.getBoundingClientRect();
+                    let top = rect.top - gt.offsetHeight - 8;
+                    if (top < 10) top = rect.bottom + 8;
+                    
+                    let left = rect.left + (rect.width / 2) - 130;
+                    if (left < 10) left = 10;
+                    if (left + 260 > window.innerWidth - 10) left = window.innerWidth - 270;
+                    
+                    gt.style.top = top + 'px';
+                    gt.style.left = left + 'px';
+                    gt.classList.add('show');
+                }
+            });
+            
+            btn.addEventListener('mouseleave', () => {
+                const gt = document.getElementById('global-tooltip');
+                if (gt) gt.classList.remove('show');
             });
         });
     }
