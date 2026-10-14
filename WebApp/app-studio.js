@@ -2303,7 +2303,6 @@ function renderConfigPanel() {
         const fbHeaders = availableHeaders;
         const FN_CATS = [
             { cat: '⚙️ Điều kiện', color: '#7c3aed', fns: [
-<<<<<<< HEAD
                 { n: 'IF',         tpl: 'IF(DK, "neu dung", "neu sai")',                      d: 'Nếu điều kiện → đúng/sai' },
                 { n: 'IFS',        tpl: 'IFS(DK1,"ket1", DK2,"ket2", "mac dinh")',           d: 'Nhiều điều kiện liên tiếp' },
                 { n: 'IFERROR',    tpl: 'IFERROR(BIEU_THUC, "Loi")',                          d: 'Bắt lỗi, trả giá trị thay thế' },
@@ -2339,47 +2338,24 @@ function renderConfigPanel() {
                 { n: 'CONCAT',      tpl: 'CONCAT(C1, C2)',               d: 'Nối chuỗi' },
                 { n: 'TEXT',        tpl: 'TEXT(COT, "0.00")',            d: 'Định dạng số' },
                 { n: 'VALUE',       tpl: 'VALUE(COT)',                   d: 'Chuyển chuỗi → số' },
-=======
-                { n: 'IF',      tpl: 'IF(DK, "neu dung", "neu sai")',                      d: 'Nếu điều kiện → đúng/sai', ex: 'IF([Diem]>=5, "Đậu", "Rớt")', res: 'Đậu' },
-                { n: 'IFS',     tpl: 'IFS(DK1,"ket1", DK2,"ket2", "mac dinh")',           d: 'Nhiều điều kiện liên tiếp', ex: 'IFS([Diem]>=8, "Giỏi", [Diem]>=5, "Khá", "Kém")', res: 'Giỏi' },
-                { n: 'IFERROR', tpl: 'IFERROR(BIEU_THUC, "Loi")',                          d: 'Bắt lỗi, trả giá trị thay thế', ex: 'IFERROR(10/0, "Lỗi chia 0")', res: 'Lỗi chia 0' },
-                { n: 'IFBLANK', tpl: 'IFBLANK(COT, "Trong")',                              d: 'Nếu rỗng thì trả giá trị thay thế', ex: 'IFBLANK([Ghi chu], "Không có")', res: 'Không có' },
-                { n: 'SWITCH',  tpl: 'SWITCH(COT, "A","Loai 1", "B","Loai 2", "Khac")',   d: 'Khớp theo giá trị (giống CHOOSE)', ex: 'SWITCH([Loai], "A", "VIP", "B", "Thường", "Khác")', res: 'VIP' },
-            ]},
-            { cat: '📝 Chuỗi văn bản', color: '#059669', fns: [
-                { n: 'LEFT',        tpl: 'LEFT(COT, 5)',                 d: 'Lấy n ký tự bên trái', ex: 'LEFT("Nguyen Van A", 6)', res: 'Nguyen' },
-                { n: 'RIGHT',       tpl: 'RIGHT(COT, 3)',                d: 'Lấy n ký tự bên phải', ex: 'RIGHT("Nguyen Van A", 1)', res: 'A' },
-                { n: 'MID',         tpl: 'MID(COT, 2, 4)',               d: 'Lấy từ vị trí bắt đầu, n ký tự', ex: 'MID("Nguyen", 2, 3)', res: 'guy' },
-                { n: 'LEN',         tpl: 'LEN(COT)',                     d: 'Đếm tổng số ký tự', ex: 'LEN("Hello")', res: '5' },
-                { n: 'TRIM',        tpl: 'TRIM(COT)',                    d: 'Xóa khoảng trắng thừa 2 đầu và giữa', ex: 'TRIM("  A   B  ")', res: 'A B' },
-                { n: 'UPPER',       tpl: 'UPPER(COT)',                   d: 'Chuyển toàn bộ sang CHỮ HOA', ex: 'UPPER("abc")', res: 'ABC' },
-                { n: 'LOWER',       tpl: 'LOWER(COT)',                   d: 'Chuyển toàn bộ sang chữ thường', ex: 'LOWER("ABC")', res: 'abc' },
-                { n: 'PROPER',      tpl: 'PROPER(COT)',                  d: 'Viết Hoa Chữ Đầu Mỗi Từ', ex: 'PROPER("nguyen van a")', res: 'Nguyen Van A' },
-                { n: 'SUBSTITUTE',  tpl: 'SUBSTITUTE(COT, "cu", "moi")', d: 'Thay thế toàn bộ chuỗi con', ex: 'SUBSTITUTE("A B C", " ", "_")', res: 'A_B_C' },
-                { n: 'REPLACE',     tpl: 'REPLACE(COT, 1, 3, "moi")',    d: 'Thay n ký tự từ vị trí chỉ định', ex: 'REPLACE("2024", 1, 2, "19")', res: '1924' },
-                { n: 'CONCAT',      tpl: 'CONCAT(C1, C2)',               d: 'Nối chuỗi', ex: 'CONCAT("A", " ", "B")', res: 'A B' },
-                { n: 'TEXT',        tpl: 'TEXT(COT, "0.00")',            d: 'Định dạng số', ex: 'TEXT(100, "0.00")', res: '100.00' },
-                { n: 'VALUE',       tpl: 'VALUE(COT)',                   d: 'Chuyển chuỗi → số', ex: 'VALUE("100")', res: '100' },
->>>>>>> 553bd82f9a17bc6b66d9d0b073d66a6a0f2cc2b5
             ]},
             { cat: '🔢 Số học', color: '#2563eb', fns: [
-                { n: 'ROUND',      tpl: 'ROUND(COT, 0)',       d: 'Làm tròn số', ex: 'ROUND(3.1415, 2)', res: '3.14' },
-                { n: 'ABS',        tpl: 'ABS(COT)',            d: 'Giá trị tuyệt đối', ex: 'ABS(-5)', res: '5' },
-                { n: 'MOD',        tpl: 'MOD(COT, 10)',        d: 'Phần dư', ex: 'MOD(10, 3)', res: '1' },
-                { n: 'SUM',        tpl: 'SUM(C1, C2)',         d: 'Tổng cộng', ex: 'SUM(10, 20)', res: '30' },
-                { n: 'AVERAGE',    tpl: 'AVERAGE(C1, C2)',     d: 'Trung bình', ex: 'AVERAGE(10, 20)', res: '15' },
-                { n: 'MAX',        tpl: 'MAX(C1, C2)',         d: 'Lớn nhất', ex: 'MAX(10, 20)', res: '20' },
-                { n: 'MIN',        tpl: 'MIN(C1, C2)',         d: 'Nhỏ nhất', ex: 'MIN(10, 20)', res: '10' },
-                { n: 'COUNT',      tpl: 'COUNT(C1, C2)',       d: 'Đếm số', ex: 'COUNT(1, "A", 2)', res: '2' },
+                { n: 'ROUND',      tpl: 'ROUND(COT, 0)',       d: 'Làm tròn số' },
+                { n: 'ABS',        tpl: 'ABS(COT)',            d: 'Giá trị tuyệt đối' },
+                { n: 'MOD',        tpl: 'MOD(COT, 10)',        d: 'Phần dư' },
+                { n: 'SUM',        tpl: 'SUM(C1, C2)',         d: 'Tổng cộng' },
+                { n: 'AVERAGE',    tpl: 'AVERAGE(C1, C2)',     d: 'Trung bình' },
+                { n: 'MAX',        tpl: 'MAX(C1, C2)',         d: 'Lớn nhất' },
+                { n: 'MIN',        tpl: 'MIN(C1, C2)',         d: 'Nhỏ nhất' },
+                { n: 'COUNT',      tpl: 'COUNT(C1, C2)',       d: 'Đếm số' },
             ]},
             { cat: '🔗 Logic & Kiểm tra', color: '#b45309', fns: [
-                { n: 'AND',      tpl: 'AND(C1>0, C2<100)',    d: 'VÀ (&&)', ex: 'AND(1>0, 2>0)', res: 'true' },
-                { n: 'OR',       tpl: 'OR(C1=="A", C2=="B")', d: 'HOẶC (||)', ex: 'OR(1>0, 0>1)', res: 'true' },
-                { n: 'NOT',      tpl: 'NOT(ISBLANK(COT))',    d: 'Phủ định', ex: 'NOT(true)', res: 'false' },
-                { n: 'ISBLANK',  tpl: 'ISBLANK(COT)',         d: 'Kiểm tra rỗng', ex: 'ISBLANK("")', res: 'true' },
-                { n: 'ISNUMBER', tpl: 'ISNUMBER(COT)',        d: 'Kiểm tra số', ex: 'ISNUMBER(123)', res: 'true' },
+                { n: 'AND',      tpl: 'AND(C1>0, C2<100)',    d: 'VÀ (&&)' },
+                { n: 'OR',       tpl: 'OR(C1=="A", C2=="B")', d: 'HOẶC (||)' },
+                { n: 'NOT',      tpl: 'NOT(ISBLANK(COT))',    d: 'Phủ định' },
+                { n: 'ISBLANK',  tpl: 'ISBLANK(COT)',         d: 'Kiểm tra rỗng' },
+                { n: 'ISNUMBER', tpl: 'ISNUMBER(COT)',        d: 'Kiểm tra số' },
             ]},
-<<<<<<< HEAD
             { cat: '📅 Ngày Tháng & Tuổi', color: '#0891b2', fns: [
                 { n: 'DATECONVERTPRO', tpl: 'DATECONVERTPRO(COT, "dd*mm*yyyy", "dd/mm/yyyy")', d: 'Chuyển định dạng thông minh — * khớp mọi ký tự phân cách (-, /, _, .). Trả "Error" nếu ngày tháng sai.' },
                 { n: 'DATECONVERT',tpl: 'DATECONVERT(COT, "dd/mm/yyyy", "mm-dd-yyyy")', d: 'Chuyển định dạng chủ động (Gốc → Mới)' },
@@ -2390,28 +2366,17 @@ function renderConfigPanel() {
                 { n: 'DAYS',       tpl: 'DAYS(C2, C1)',                     d: 'Số ngày chênh lệch' },
                 { n: 'ADDDAYS',    tpl: 'ADDDAYS(COT, 7)',                  d: 'Cộng thêm n ngày' },
                 { n: 'DATEVALUE',  tpl: 'DATEVALUE("31/12/2024")',           d: 'Chuyển chữ thành ngày' },
-=======
-            { cat: '📅 Ngày Tháng', color: '#0891b2', fns: [
-                { n: 'DATECONVERTPRO', tpl: 'DATECONVERTPRO(COT, "dd*mm*yyyy", "dd/mm/yyyy")', d: 'Chuyển định dạng thông minh — * khớp mọi ký tự phân cách (-, /, _, .). Trả "Error" nếu ngày tháng sai.', ex: 'DATECONVERTPRO("31-12-2024", "dd*mm*yyyy", "mm/dd/yyyy")', res: '12/31/2024' },
-                { n: 'DATECONVERT',tpl: 'DATECONVERT(COT, "dd/mm/yyyy", "mm-dd-yyyy")', d: 'Chuyển định dạng chủ động (Gốc → Mới)', ex: 'DATECONVERT("31/12/2024", "dd/mm/yyyy", "mm-dd-yyyy")', res: '12-31-2024' },
-                { n: 'DATEFORMAT', tpl: 'DATEFORMAT(COT, "dd-MM-yyyy")', d: 'Đổi định dạng (Máy tự đoán ngày gốc)', ex: 'DATEFORMAT("2024-12-31", "dd/MM/yyyy")', res: '31/12/2024' },
-                { n: 'DATEDIF',    tpl: 'DATEDIF(C1, C2, "D")',             d: 'Khoảng cách ngày', ex: 'DATEDIF("2024-01-01", "2024-01-10", "D")', res: '9' },
-                { n: 'TODAY',      tpl: 'TODAY()',                           d: 'Ngày hôm nay', ex: 'TODAY()', res: '04/06/2026' },
-                { n: 'DAYS',       tpl: 'DAYS(C2, C1)',                     d: 'Số ngày chênh lệch', ex: 'DAYS("2024-01-10", "2024-01-01")', res: '9' },
-                { n: 'ADDDAYS',    tpl: 'ADDDAYS(COT, 7)',                  d: 'Cộng thêm n ngày', ex: 'ADDDAYS("2024-01-01", 7)', res: '2024-01-08' },
-                { n: 'DATEVALUE',  tpl: 'DATEVALUE("31/12/2024")',           d: 'Chuyển chữ thành ngày', ex: 'DATEVALUE("2024-12-31")', res: 'Số nguyên (Excel Date)' },
->>>>>>> 553bd82f9a17bc6b66d9d0b073d66a6a0f2cc2b5
             ]},
             { cat: '💰 Định Dạng Số', color: '#dc2626', fns: [
-                { n: 'VND',       tpl: 'VND(COT)',              d: 'Định dạng tiền VND', ex: 'VND(5000000)', res: '5,000,000 ₫' },
-                { n: 'DOLLAR',    tpl: 'DOLLAR(COT, 2)',        d: 'Định dạng tiền USD', ex: 'DOLLAR(5000)', res: '$5,000.00' },
-                { n: 'NUMFORMAT', tpl: 'NUMFORMAT(COT, "VND")', d: 'Format nâng cao', ex: 'NUMFORMAT(1000, "VND")', res: '1,000 ₫' },
+                { n: 'VND',       tpl: 'VND(COT)',              d: 'Định dạng tiền VND' },
+                { n: 'DOLLAR',    tpl: 'DOLLAR(COT, 2)',        d: 'Định dạng tiền USD' },
+                { n: 'NUMFORMAT', tpl: 'NUMFORMAT(COT, "VND")', d: 'Format nâng cao' },
             ]},
             { cat: '🔧 Tiện Ích', color: '#6b7280', fns: [
-                { n: 'REMOVEACCENTS', tpl: 'REMOVEACCENTS(COT)',          d: 'Bỏ dấu tiếng Việt', ex: 'REMOVEACCENTS("Xin chào")', res: 'Xin chao' },
-                { n: 'REMOVEVN',      tpl: 'REMOVEVN(COT)',               d: 'Bỏ dấu tiếng Việt', ex: 'REMOVEVN("Việt Nam")', res: 'Viet Nam' },
-                { n: 'EXTRACTNUM',    tpl: 'EXTRACTNUM(COT)',             d: 'Lấy số từ chuỗi', ex: 'EXTRACTNUM("Giá 500k")', res: '500' },
-                { n: 'EXTRACTTEXT',   tpl: 'EXTRACTTEXT(COT)',            d: 'Lấy chữ từ chuỗi', ex: 'EXTRACTTEXT("Giá 500k")', res: 'Giá k' },
+                { n: 'REMOVEACCENTS', tpl: 'REMOVEACCENTS(COT)',          d: 'Bỏ dấu tiếng Việt' },
+                { n: 'REMOVEVN',      tpl: 'REMOVEVN(COT)',               d: 'Bỏ dấu tiếng Việt' },
+                { n: 'EXTRACTNUM',    tpl: 'EXTRACTNUM(COT)',             d: 'Lấy số từ chuỗi' },
+                { n: 'EXTRACTTEXT',   tpl: 'EXTRACTTEXT(COT)',            d: 'Lấy chữ từ chuỗi' },
             ]}
         ];
 
@@ -2605,7 +2570,7 @@ function renderConfigPanel() {
             <div style="margin-bottom:8px;">
                 <div style="font-size:10px;font-weight:700;color:${cat.color};margin-bottom:4px;">${cat.cat}</div>
                 <div style="display:flex;flex-wrap:wrap;gap:3px;">
-                    ${cat.fns.map(f => `<button class="fb-fn-btn" data-tpl="${f.tpl.replace(/"/g,'&quot;')}" style="padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid ${cat.color};color:${cat.color};background:${cat.color}10;">${f.n}</button>`).join('')}
+                    ${cat.fns.map(f => `<button class="fb-fn-btn" data-tpl="${f.tpl.replace(/"/g,'&quot;')}" title="${f.d}" style="padding:2px 6px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid ${cat.color};color:${cat.color};background:${cat.color}10;">${f.n}</button>`).join('')}
                 </div>
             </div>`).join('');
 
@@ -2706,48 +2671,6 @@ function renderConfigPanel() {
                 const ins = btn.dataset.tpl;
                 insertHtmlAtCursor(ins);
                 updateFormulaFromEditor();
-            });
-
-            btn.addEventListener('mouseenter', () => {
-                let gt = document.getElementById('global-tooltip');
-                if (!gt) {
-                    gt = document.createElement('div');
-                    gt.id = 'global-tooltip';
-                    document.body.appendChild(gt);
-                }
-                
-                const fnName = btn.innerText.trim();
-                let fData = null;
-                for (const cat of FN_CATS) {
-                    const found = cat.fns.find(x => x.n === fnName);
-                    if (found) { fData = found; break; }
-                }
-                
-                if (fData) {
-                    gt.innerHTML = `
-                        <b>${fData.n}</b>
-                        <div>${fData.d}</div>
-                        ${fData.ex ? `<span class="ex-lbl">Ví dụ:</span><span class="ex-code">${fData.ex.replace(/"/g,'&quot;')}</span>` : ''}
-                        ${fData.res ? `<span class="ex-lbl">Kết quả:</span><span class="ex-res">👉 ${fData.res.replace(/"/g,'&quot;')}</span>` : ''}
-                    `;
-                    
-                    const rect = btn.getBoundingClientRect();
-                    let top = rect.top - gt.offsetHeight - 8;
-                    if (top < 10) top = rect.bottom + 8;
-                    
-                    let left = rect.left + (rect.width / 2) - 130;
-                    if (left < 10) left = 10;
-                    if (left + 260 > window.innerWidth - 10) left = window.innerWidth - 270;
-                    
-                    gt.style.top = top + 'px';
-                    gt.style.left = left + 'px';
-                    gt.classList.add('show');
-                }
-            });
-            
-            btn.addEventListener('mouseleave', () => {
-                const gt = document.getElementById('global-tooltip');
-                if (gt) gt.classList.remove('show');
             });
         });
     }
@@ -2915,247 +2838,81 @@ document.getElementById('btn-export-final').addEventListener('click', () => {
         return;
     }
 
-    document.getElementById('global-loading').classList.remove('hidden');
-    document.getElementById('global-loading-text').innerText = "Đang chạy Engine xử lý Data lớn (Xin vui lòng đợi)...";
-    
-    // setTimeout để UI kịp hiện Loading Spinner
+    const loadingEl = document.getElementById('global-loading');
+    const loadingText = document.getElementById('global-loading-text');
+    if (loadingEl) loadingEl.classList.remove('hidden');
+    if (loadingText) loadingText.innerText = "Đang chuẩn bị xuất dữ liệu...";
+
     setTimeout(async () => {
         try {
-            const workerApi = AppState.rootFileCache.workerApi;
+            const workerApi = AppState.rootFileCache?.workerApi;
+            if (!workerApi) throw new Error("Worker xử lý dữ liệu chưa sẵn sàng. Vui lòng thử lại.");
 
-            // Lấy FULL data từ sheet hiện tại (không giới hạn preview)
-            const currentSheet = AppState.rootSelectedSheet || AppState.rootFileCache.sheetNames[0];
+            // Lấy FULL data từ sheet hiện tại
+            const currentSheet = AppState.rootSelectedSheet || (AppState.rootFileCache.sheetNames && AppState.rootFileCache.sheetNames[0]);
             const fullData = AppState.rootFileCache.sheetsData[currentSheet]
                 ? AppState.rootFileCache.sheetsData[currentSheet].fullData
                 : AppState.rootData;
 
-            // 1. Gửi FULL data + pipeline xuống Worker để xử lý
-            document.getElementById('global-loading-text').innerText = "Đang tính toán toàn bộ pipeline trong Worker...";
-            const pipelineResult = await workerApi.runPipeline(AppState.steps, fullData);
+            if (loadingText) loadingText.innerText = `Đang tính toán pipeline (${(fullData ? fullData.length : 0).toLocaleString()} dòng)...`;
+            await new Promise(r => setTimeout(r, 30));
 
-            // 2. Yêu cầu Worker tạo File Excel hoặc ghép vào File gốc
-            document.getElementById('global-loading-text').innerText = "Đang chuẩn bị xuất file...";
-            
-            let buffer;
-            if (AppState.rootFileCache && AppState.rootFileCache.originalBuffer) {
-                try {
-                    // Lấy toàn bộ dữ liệu đã được xử lý từ Worker
-                    document.getElementById('global-loading-text').innerText = "Đang tải dữ liệu kết quả từ Worker...";
-                    const processedData = await workerApi.getProcessedData();
+            // Chạy pipeline trên toàn bộ dữ liệu trong worker
+            await workerApi.runPipeline(AppState.steps, fullData);
 
-                    document.getElementById('global-loading-text').innerText = "Đang ghép các cột mới vào File Excel gốc...";
-                    // Khởi tạo ExcelJS Workbook từ buffer gốc để bảo toàn định dạng và font
-                    const workbook = new ExcelJS.Workbook();
-                    await workbook.xlsx.load(AppState.rootFileCache.originalBuffer);
-                    
-                    const worksheet = workbook.getWorksheet(currentSheet);
-                    
-                    if (worksheet) {
-                        const headerMap = {};
-                        const originalHeaders = [];
+            if (loadingText) loadingText.innerText = "Đang thu thập dữ liệu kết quả...";
+            await new Promise(r => setTimeout(r, 20));
 
-                        // Đọc và map Header hiện có của worksheet
-                        const headerRow = worksheet.getRow(1);
-                        headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-                            let hName = String(cell.value || '').trim();
-                            if (hName) {
-                                const encoding = AppState.rootFileCache.sheetsData[currentSheet]?.detectedEncoding;
-                                if (encoding && encoding !== 'NONE') {
-                                    hName = VietEncoder.fix(hName, encoding);
-                                }
-                                headerMap[hName] = colNumber;
-                                originalHeaders.push(hName);
-                            }
-                        });
+            let processedData = await workerApi.getProcessedData();
 
-                        // Xác định xem có phải là Group By hay so sánh mà làm thay đổi cấu trúc hoàn toàn không
-                        const hasOriginalIndices = processedData.some(r => r.__original_row_idx__ !== undefined);
-
-                        // Kiểm tra xem thứ tự dòng có bị đảo lộn (sắp xếp) không
-                        let isOrderSame = true;
-                        if (hasOriginalIndices) {
-                            let lastIdx = 1;
-                            for (const row of processedData) {
-                                if (row.__original_row_idx__ !== undefined) {
-                                    if (row.__original_row_idx__ < lastIdx) {
-                                        isOrderSame = false;
-                                        break;
-                                    }
-                                    lastIdx = row.__original_row_idx__;
-                                }
-                            }
-                        }
-
-                        if (!hasOriginalIndices || !isOrderSame) {
-                            // Nếu là GROUP_BY hoặc có SORT làm đảo lộn dòng, xóa toàn bộ dòng và ghi mới hoàn toàn
-                            const totalRows = worksheet.rowCount;
-                            if (totalRows >= 2) {
-                                worksheet.spliceRows(2, totalRows - 1);
-                            }
-                            // Rebuild từ đầu
-                            const processedHeaders = Object.keys(processedData[0] || {}).filter(h => h !== '__original_row_idx__');
-                            headerRow.values = processedHeaders;
-                            
-                            // Khử lỗi font legacy tiếng Việt cho header row
-                            headerRow.eachCell((cell, colNumber) => {
-                                const currentFont = cell.font || (worksheet.getColumn(colNumber).font) || {};
-                                const fName = String(currentFont.name || '').toLowerCase();
-                                if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
-                                    cell.font = { ...currentFont, name: 'Calibri' };
-                                }
-                            });
-
-                            processedData.forEach((procRow, idx) => {
-                                const wsRow = worksheet.getRow(idx + 2);
-                                processedHeaders.forEach((h, colIdx) => {
-                                    const cell = wsRow.getCell(colIdx + 1);
-                                    cell.value = procRow[h];
-                                    
-                                    const currentFont = cell.font || (worksheet.getColumn(colIdx + 1).font) || {};
-                                    const fName = String(currentFont.name || '').toLowerCase();
-                                    if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
-                                        cell.font = { ...currentFont, name: 'Calibri' };
-                                    }
-                                });
-                            });
-                        } else {
-                            // TRƯỜNG HỢP LÝ TƯỞNG: Thứ tự dòng giữ nguyên (chỉ LỌC hoặc thêm cột CÔNG THỨC/VLOOKUP)
-                            
-                            // 1. Tìm các cột mới sinh ra từ pipeline để chèn tiếp vào cuối
-                            const processedHeaders = Object.keys(processedData[0] || {});
-                            const newColumns = processedHeaders.filter(h => h !== '__original_row_idx__' && !headerMap[h]);
-
-                            // Điền thêm header cho các cột mới
-                            let nextColIndex = originalHeaders.length + 1;
-                            newColumns.forEach(newCol => {
-                                headerMap[newCol] = nextColIndex;
-                                const cell = headerRow.getCell(nextColIndex);
-                                cell.value = newCol;
-                                
-                                // Sao chép style từ ô header cuối cùng để đồng nhất giao diện, xóa font legacy tiếng Việt
-                                const lastHeaderCell = headerRow.getCell(originalHeaders.length);
-                                if (lastHeaderCell && lastHeaderCell.style) {
-                                    const newStyle = JSON.parse(JSON.stringify(lastHeaderCell.style));
-                                    const currentFont = newStyle.font || (worksheet.getColumn(nextColIndex).font) || {};
-                                    const fName = String(currentFont.name || '').toLowerCase();
-                                    if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
-                                        newStyle.font = { ...currentFont, name: 'Calibri' };
-                                    }
-                                    cell.style = newStyle;
-                                }
-                                nextColIndex++;
-                            });
-
-                            // Khử lỗi font cho các cột header cũ (nếu có dùng TCVN3/VNI)
-                            headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-                                if (colNumber <= originalHeaders.length) {
-                                    const origHeader = originalHeaders[colNumber - 1];
-                                    const unicodeHeader = AppState.rootHeaders[colNumber - 1] || origHeader;
-                                    cell.value = unicodeHeader;
-                                }
-                                
-                                const currentFont = cell.font || (worksheet.getColumn(colNumber).font) || {};
-                                const fName = String(currentFont.name || '').toLowerCase();
-                                if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
-                                    cell.font = { ...currentFont, name: 'Calibri' };
-                                }
-                            });
-
-                            // 2. Ghi đè Unicode cho toàn bộ các ô cũ/mới và khử sạch font legacy tiếng Việt
-                            processedData.forEach((procRow) => {
-                                const origRowIdx = procRow.__original_row_idx__;
-                                const wsRow = worksheet.getRow(origRowIdx);
-                                
-                                processedHeaders.forEach(colName => {
-                                    const colNumber = headerMap[colName];
-                                    if (colNumber) {
-                                        const cell = wsRow.getCell(colNumber);
-                                        
-                                        if (newColumns.includes(colName)) {
-                                            // Cột mới: ghi giá trị
-                                            cell.value = procRow[colName];
-                                            
-                                            // Sao chép định dạng của ô bên trái để đồng nhất style, nhưng xóa font legacy tiếng Việt
-                                            if (colNumber > 1) {
-                                                const leftCell = wsRow.getCell(colNumber - 1);
-                                                if (leftCell && leftCell.style) {
-                                                    const newStyle = JSON.parse(JSON.stringify(leftCell.style));
-                                                    const currentFont = newStyle.font || (worksheet.getColumn(colNumber).font) || {};
-                                                    const fName = String(currentFont.name || '').toLowerCase();
-                                                    if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
-                                                        newStyle.font = { ...currentFont, name: 'Calibri' };
-                                                    }
-                                                    cell.style = newStyle;
-                                                }
-                                            }
-                                        } else {
-                                            // Cột cũ: ghi đè giá trị Unicode sạch và khử font legacy
-                                            cell.value = procRow[colName];
-                                            
-                                            const currentFont = cell.font || (worksheet.getColumn(colNumber).font) || {};
-                                            const fName = String(currentFont.name || '').toLowerCase();
-                                            if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
-                                                cell.font = { ...currentFont, name: 'Calibri' };
-                                            }
-                                        }
-                                    }
-                                });
-                                
-                                // Xóa dữ liệu các cột cũ nếu đã bị drop trong pipeline
-                                originalHeaders.forEach(origHName => {
-                                    if (!processedHeaders.includes(origHName) && headerMap[origHName]) {
-                                        const colNum = headerMap[origHName];
-                                        const cell = wsRow.getCell(colNum);
-                                        cell.value = null; // Clear content of dropped column
-                                        const currentFont = cell.font || (worksheet.getColumn(colNum).font) || {};
-                                        const fName = String(currentFont.name || '').toLowerCase();
-                                        if (fName.startsWith('.vn') || fName.startsWith('vni-')) {
-                                            cell.font = { ...currentFont, name: 'Calibri' };
-                                        }
-                                    }
-                                });
-                            });
-
-                            // 3. Xóa các dòng bị lọc từ dưới lên trên để không làm lệch chỉ mục vật lý
-                            const activeIndices = new Set(processedData.map(r => r.__original_row_idx__).filter(Boolean));
-                            for (let r = worksheet.rowCount; r >= 2; r--) {
-                                if (!activeIndices.has(r)) {
-                                    worksheet.spliceRows(r, 1);
-                                }
-                            }
-                        }
-                    }
-                    
-                    const arrBuffer = await workbook.xlsx.writeBuffer();
-                    buffer = arrBuffer;
-                } catch (mergeErr) {
-                    console.warn("Main thread merge failed, falling back to clean worker export:", mergeErr);
-                    buffer = await workerApi.exportFinal();
+            // Áp dụng bộ lọc cột xem trước (nếu có) để file xuất ra đồng nhất với bảng hiển thị
+            if (_colValueFilters && _colValueFilters.size > 0) {
+                for (const [col, allowedSet] of _colValueFilters) {
+                    processedData = processedData.filter(row => {
+                        const raw = row[col];
+                        const display = (raw === null || raw === undefined || String(raw).trim() === '') ? '' : String(raw).trim();
+                        return allowedSet.has(display);
+                    });
                 }
-            } else {
-                buffer = await workerApi.exportFinal();
             }
 
+            if (!processedData || processedData.length === 0) {
+                throw new Error("Không có dòng dữ liệu nào thỏa mãn điều kiện để xuất.");
+            }
+
+            if (loadingText) loadingText.innerText = `Đang tạo file Excel (${processedData.length.toLocaleString()} dòng)...`;
+            await new Promise(r => setTimeout(r, 30));
+
+            // Xuất siêu tốc trực tiếp bằng SheetJS đã tối ưu
+            const buffer = workerApi.exportWithMainThreadXLSX(processedData);
             if (!buffer || buffer.byteLength === 0) throw new Error("File tạo ra bị trống. Vui lòng thử lại.");
 
-            // 3. Tải file về máy
+            if (loadingText) loadingText.innerText = "Đang tải file về máy...";
+            await new Promise(r => setTimeout(r, 20));
+
+            // Tải file về máy
             const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            const finalFileName = `Export_${AppState.rootFileCache.fileName.split('.')[0]}_${_dateStr()}.xlsx`;
-            a.download = finalFileName;
+            const originalBase = AppState.rootFileCache?.fileName ? AppState.rootFileCache.fileName.split('.')[0] : 'DataX';
+            a.download = `Export_${originalBase}_${_dateStr()}.xlsx`;
+            document.body.appendChild(a);
             a.click();
-            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            setTimeout(() => window.URL.revokeObjectURL(url), 2000);
 
-            alert(`✅ Đã xử lý và xuất xong ${pipelineResult.totalRows.toLocaleString()} dòng dữ liệu!`);
+            if (loadingText) loadingText.innerText = "Hoàn tất!";
+            await new Promise(r => setTimeout(r, 200));
+
+            alert(`✅ Đã xuất thành công ${processedData.length.toLocaleString()} dòng dữ liệu!`);
         } catch (err) {
             console.error("Lỗi Xuất File:", err);
             alert("Lỗi xuất file: " + err.message);
         } finally {
-            document.getElementById('global-loading').classList.add('hidden');
+            if (loadingEl) loadingEl.classList.add('hidden');
         }
-    }, 50);
+    }, 40);
 });
 
 // === CONFIG PANEL: click-outside để đóng ===

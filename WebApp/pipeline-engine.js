@@ -905,24 +905,47 @@ class ExcelWorkerAPI {
     exportWithMainThreadXLSX(processedData) {
         if (!processedData || processedData.length === 0) throw new Error('Không có dữ liệu để xuất.');
         if (typeof XLSX === 'undefined') throw new Error('Thư viện SheetJS chưa được tải.');
+
+        // Lấy headers chuẩn xác từ các dòng đầu tiên (tránh quét toàn bộ 22.000 dòng)
         const headerSet = new Set();
-        processedData.forEach(row => {
-            Object.keys(row).forEach(k => {
+        const sampleSize = Math.min(processedData.length, 50);
+        for (let i = 0; i < sampleSize; i++) {
+            const row = processedData[i];
+            if (!row) continue;
+            for (const k of Object.keys(row)) {
                 if (k !== '__original_row_idx__') headerSet.add(k);
-            });
-        });
-        const headers = Array.from(headerSet);
-        const rows = [headers];
-        for (let i = 0; i < processedData.length; i++) {
-            rows.push(headers.map(h => {
-                const v = processedData[i][h];
-                return (v === null || v === undefined) ? '' : v;
-            }));
+            }
         }
+        const headers = Array.from(headerSet);
+        const numCols = headers.length;
+        const totalRows = processedData.length;
+
+        // Cấp phát mảng 2 chiều phẳng siêu tốc (không closure, tránh đơ trình duyệt và GC lag)
+        const rows = new Array(totalRows + 1);
+        rows[0] = headers;
+
+        for (let i = 0; i < totalRows; i++) {
+            const item = processedData[i];
+            const r = new Array(numCols);
+            for (let c = 0; c < numCols; c++) {
+                const v = item[headers[c]];
+                r[c] = (v === null || v === undefined) ? '' : v;
+            }
+            rows[i + 1] = r;
+        }
+
         const ws = XLSX.utils.aoa_to_sheet(rows);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Data');
-        const arr = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+        const sheetName = (window.AppState && window.AppState.rootSelectedSheet)
+            ? String(window.AppState.rootSelectedSheet).substring(0, 31)
+            : 'KetQua';
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+
+        const arr = XLSX.write(wb, { 
+            type: 'array', 
+            bookType: 'xlsx',
+            compression: true
+        });
         return new Uint8Array(arr).buffer;
     }
 
